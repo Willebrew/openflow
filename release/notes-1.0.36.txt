@@ -1,0 +1,3 @@
+openflow 1.0.36
+
+- History matches Home: compact inset clip rows with app icon, time, snippet, teal copy, and delete. Search and clear stay. Empty state is quiet with the same teal accent.

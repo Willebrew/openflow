@@ -1,0 +1,5 @@
+openflow 1.0.38
+
+- Dictionary matches Home and History: compact teal header, search + Add, inset term rows, and a quiet empty state. Hub padding matches History.
+- History count is a centered teal capsule chip, not a superscript. Search and Clear share the same 10pt corners and 40pt height.
+- Home 2x2 cards share one top baseline. This week puts the number on the title row and the Last week comparison on the line below.

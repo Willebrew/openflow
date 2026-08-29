@@ -1,0 +1,4 @@
+OpenFlow 1.0.2
+
+- Validates OpenFlow's signed automatic update and rollback path.
+- Includes the latest production reliability and subscription improvements.

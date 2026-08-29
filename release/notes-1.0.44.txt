@@ -1,0 +1,4 @@
+openflow 1.0.44
+
+- Style now has one current voice at the top. Tap a built-in or custom row to make it the default. Exceptions (Personal / Work / Email, then specific apps) sit last and use iOS Settings rows with a single disclosure. Auto in an exception means the default style above.
+- Sparkles drafts a style from the inline composer instead of a second header mode. The double chevron on Style pickers is gone: Menu's system indicator is hidden so only one custom disclosure shows.

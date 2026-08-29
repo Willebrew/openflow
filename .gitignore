@@ -1,0 +1,64 @@
+# macOS
+.DS_Store
+
+# Xcode local state and build products
+build/
+DerivedData/
+*.xcarchive
+*.dSYM/
+*.xcuserstate
+xcuserdata/
+*.xcuserdatad/
+
+# Swift Package Manager local state
+.build/
+.swiftpm/
+
+# JavaScript dependencies and generated output
+node_modules/
+dist/
+.vercel/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.openflow-secrets
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+*.pem
+*.key
+data/.signing/
+cloud/
+
+# Private release runbooks (keep on disk; do not ship to remotes)
+docs/release-distribution.md
+docs/production-readiness.md
+docs/paid-loop-smoke.md
+
+# Maintainer-only remotes / history notes (keep on disk; do not ship)
+docs/github-public-snapshot.md
+.cursor/rules/github-public-snapshot.mdc
+scripts/git-hooks/
+
+# Hosted updater payloads (the Mac app only needs the baked-in public key)
+latest.json
+appcast.xml
+appcast*.xml
+*.delta
+/*.dmg
+/*.zip
+release/*.dmg
+release/*.zip
+release/release-evidence.json
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+
+# Local capture of the live marketing hero (not the committed retina crop)
+release/dmg/hero-live.png

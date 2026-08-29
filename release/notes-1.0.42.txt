@@ -1,0 +1,5 @@
+openflow 1.0.42
+
+- Phrases matches Dictionary: header plus, full-width search, inline trigger → expansion composer, in-place pencil edit. No count chips.
+- Style uses the same compact glass: custom styles with a written prompt or an AI draft, context pickers, and app overrides. Built-in presets stay bundled. No count chips.
+- Custom styles sync to the cloud for signed-in accounts and feed cleanup as custom_style_prompt.

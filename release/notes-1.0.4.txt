@@ -1,0 +1,3 @@
+Fixes an update regression that could reopen onboarding for cloud users.
+Hardens global hotkey teardown to prevent duplicate keyboard event taps.
+Confirms and cleans up completed updates from the newly launched app.

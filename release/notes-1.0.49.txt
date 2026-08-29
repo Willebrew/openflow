@@ -1,0 +1,5 @@
+openflow 1.0.49
+
+- Creating a style asks for a Style title. That field is no longer filled with a sample name like Shakespearean.
+- Email letter’s name field is labeled Your name on emails, with a caption that it can end a letter (Best, Will). It stays under that built-in style, not on Personal/Work/Email.
+- Trash on Style, Phrases, Dictionary, and History asks before deleting. Composer cancel and History Clear do not.

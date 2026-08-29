@@ -1,0 +1,5 @@
+openflow 1.0.52
+
+- History, Dictionary, Phrases, Style, and Apps hide the overlay scrollbar so it cannot sit on trailing copy, pencil, or trash. Trackpad and mouse wheel still scroll. Inset rows keep a 12pt trailing gutter if a system overlay still draws.
+- Settings, including expanded Bring your own key, still shows its scroller.
+- Flow Hub is locked at 880×640. It cannot grow past the dashboard design size. Onboarding stays 920×640.

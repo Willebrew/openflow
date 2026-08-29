@@ -1,0 +1,4 @@
+openflow 1.0.28
+
+- Inline Cerebras cleanup on the same transcribe-fast hop so Cursor no longer waits on a second authenticated /openflow/cleanup round trip.
+- Log cerebrasRoundTripMs separately from local cleanup; that number is the one that should be under 500ms.

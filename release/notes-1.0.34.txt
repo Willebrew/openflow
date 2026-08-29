@@ -1,0 +1,4 @@
+openflow 1.0.34
+
+- Home is a 2-column board in one viewport: time saved beside this week, top apps beside last clip, footer metrics on one row.
+- Dropped device copy and the extra logo on the time-saved card. Ready Home still does not scroll.

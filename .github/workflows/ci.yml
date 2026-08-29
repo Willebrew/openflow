@@ -1,0 +1,17 @@
+# Intentionally not triggered on push/PR.
+# Checks run on local GitLab CI. Look at GitHub commit status / check "ci/gitlab"
+# (also named "GitLab CI"). Do not add push or pull_request triggers here.
+name: CI (runs on GitLab)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notice:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "CI runs on GitLab, not GitHub Actions."

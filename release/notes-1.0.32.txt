@@ -1,0 +1,5 @@
+openflow 1.0.32
+
+- Home layout A: time saved, this week vs last, trend bars, top apps, last clip on this Mac, compact More.
+- Signed-in Home uses cloud days, lifetime, and per-app totals across every Mac. No 3-Mac cap.
+- History no longer shows updater/latency hop debug.

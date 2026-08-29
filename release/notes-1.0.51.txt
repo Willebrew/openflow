@@ -1,0 +1,5 @@
+openflow 1.0.51
+
+- Top apps View all opens a real Apps hub page. It no longer covers Home with a glass overlay.
+- Apps uses the same chrome as History: compact header, inset rows with icon, name, minutes, and a moss usage bar. Home tab or the back control returns to Home.
+- Last clip View history still opens History. The Home 2x2 stays as it is while you are on Home.

@@ -1,0 +1,5 @@
+openflow 1.0.61
+
+- Settings and onboarding match the live marketing page: Free is 2,000 words each month. Pro is Pro on every Mac, no monthly word cap, $6 Groq spend each month, and Generate with openflow is Pro. Copy does not say unlimited.
+- Home time saved uses the same lifetime words and hold time as the footer (40 WPM typing minus hold). The percent under the gauge is labeled this week.
+- After a clip, Apps waits until the cloud app write finishes, so the first Mail or Xcode dictation shows without a second clip.

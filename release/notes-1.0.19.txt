@@ -1,0 +1,4 @@
+openflow 1.0.19
+
+- Labels Home current streak as days in a row.
+- Labels Home average speed as coming from recording time.

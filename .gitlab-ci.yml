@@ -1,0 +1,14 @@
+include:
+  - project: root/ci-templates
+    file: /github-status.yml
+    ref: main
+
+stages: [test]
+
+checks:
+  stage: test
+  image: node:22-bookworm
+  interruptible: true
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends ripgrep zsh curl
+    - bash scripts/ci-linux.sh

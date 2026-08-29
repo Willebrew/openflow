@@ -1,0 +1,6 @@
+openflow 1.0.57
+
+- Style no longer beachballs when you scroll down. Assignment pickers are a button + popover instead of SwiftUI Menu, which was measuring NSMenu inside the scroll view on the main thread.
+- Style rows are a real LazyVStack (built-in, custom, When you're in, and specific apps). App icons and the add-app list are cached so scroll does not redo Launch Services or Applications walks.
+- Settings microphone and shortcut pickers use the same popover, so scrolling General or Shortcuts cannot measure NSMenu. History, Dictionary, Phrases, and Apps already used lazy ForEach lists with no Menu. Home does not scroll. Subscription / Bring your own key still has no Menu.
+- Header chrome, hidden list scrollers, Settings scroller, and the 880×640 hub lock from 1.0.52–1.0.56 are unchanged.

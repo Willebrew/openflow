@@ -1,0 +1,4 @@
+openflow 1.0.18
+
+- Prompts for Accessibility Enable first so openflow appears in the list before Settings opens.
+- Labels Home “Total words dictated” as coming from your dictations.

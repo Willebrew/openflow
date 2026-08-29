@@ -1,0 +1,4 @@
+openflow 1.0.43
+
+- Phrases and Style use the same hub chrome as Home and History: 18pt left/right, 12pt top/bottom, shared compact header. Titles sit on one baseline across tabs.
+- Dictionary already matched; it now uses the same named padding so it cannot drift. Header plus, full-width search, inline composers, custom styles, and AI draft stay.

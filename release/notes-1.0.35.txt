@@ -1,0 +1,4 @@
+openflow 1.0.35
+
+- Home is four rounded cards: time-saved gauge, this-week Mon–Sun chart, top apps with hold minutes, last clip with a copy button.
+- Copy on last clip writes the latest dictation to the pasteboard, same as the menu item. Ready Home still does not scroll.

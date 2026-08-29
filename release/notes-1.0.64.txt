@@ -1,0 +1,5 @@
+openflow 1.0.64
+
+- Settings → Subscription Free and Pro cards are the same height. Buttons sit on a shared bottom edge inside the glass. Copy is unchanged.
+- Includes 1.0.62 Mail/Notes field context and 1.0.63 week-to-date vs same weekdays last week.
+- Header chrome stays 24pt inset and 18pt title-to-content. Collapsed Subscription still does not scroll when it fits 880×640.

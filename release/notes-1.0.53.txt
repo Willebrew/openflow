@@ -1,0 +1,5 @@
+openflow 1.0.53
+
+- Apps you dictate into accumulate instead of replacing each other. Mail stays after an Xcode clip on the Apps hub, signed in or out.
+- Home Top apps shows three ranked rows. View all still has everyone.
+- Cloud stats merge with apps already shown, so a shorter GET cannot drop Mail.

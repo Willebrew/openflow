@@ -1,0 +1,4 @@
+openflow 1.0.24
+
+- AirPods and other Bluetooth headsets now capture when you pick them in Settings → Microphone. openflow switches the input to HFP, times out instead of recording silence, then restores your previous mic.
+- Dictionary, Phrases, and Style show a count chip next to the saved-list header.

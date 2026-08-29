@@ -1,0 +1,4 @@
+openflow 1.0.37
+
+- History rows no longer show Auto / Prompt mode chips. Time sits in a reserved tabular column with a real gap before the snippet, no pipe.
+- Home week chart Y-axis keeps 1k-scale labels on one line. Footer WPM no longer says "from hold".

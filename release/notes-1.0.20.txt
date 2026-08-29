@@ -1,0 +1,4 @@
+openflow 1.0.20
+
+- Signed-in Home streak, speed, and total words come from your account, not this Mac's clip list.
+- Signed-out Home still uses a running total that does not shrink when old clips roll off.

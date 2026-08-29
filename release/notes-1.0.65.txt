@@ -1,0 +1,4 @@
+openflow 1.0.65
+
+- Signing out a session from website account settings now signs the Mac out of openflow cloud. Your Groq key stays. Offline dictation is unchanged.
+- History Clear asks before wiping clips, same confirm as delete.

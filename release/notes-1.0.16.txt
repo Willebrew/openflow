@@ -1,0 +1,7 @@
+openflow 1.0.16
+
+- Matches onboarding copy to the shipped idle pill, which stays visible and click-through until you hide it in Settings.
+- Waits to arm Hold Fn and other dictation hotkeys until onboarding, permissions, and a provider are complete.
+- Installs updates only from /Applications or ~/Applications, so debug /tmp builds cannot replace themselves.
+- Asks before a remote heartbeat can roll back to the previous version.
+- Pins the NeuroQuest Labs development team so a clean machine cannot ad-hoc-sign a release.

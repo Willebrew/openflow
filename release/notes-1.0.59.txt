@@ -1,0 +1,4 @@
+openflow 1.0.59
+
+- Free accounts still see Generate with openflow, but the control is greyed out. Write it myself stays available. Pro and a stored Groq key can still generate.
+- The extra X next to Write it myself is gone. Header + still cancels compose.

@@ -1,0 +1,5 @@
+openflow 1.0.22
+
+- Command mode is gone from shortcuts and dictation. It did not work.
+- Snippets is now Phrases, with the text.quote icon. Your saved items still load.
+- The menu bar icon stays in place after an update instead of jumping to the clock.

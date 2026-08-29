@@ -1,0 +1,4 @@
+openflow 1.0.45
+
+- Style picker is now a real selectable library: Built-in and Yours rows show an empty radio or a teal check with a moss highlight. Personal, Work, Email, and specific apps sit in a separate “Use a different style when…” section as Settings assignment rows (context on the left, chosen style on the right). Auto means use the style you selected above.
+- The generate composer is Name, then Describe what you want, then Instructions. Sparkles fills Name and Instructions only; the describe field stays so the prompt does not look like it jumped boxes. Name is a left-aligned field like Dictionary, not a centered title.

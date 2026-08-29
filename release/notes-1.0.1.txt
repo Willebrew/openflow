@@ -1,0 +1,7 @@
+OpenFlow 1.0.1
+
+- Adds secure OpenFlow Pro and free-plan cloud dictation through Convex.
+- Improves native text insertion across browsers, IDEs, Messages, Linear, and terminals.
+- Adds signed automatic updates with staged rollout and automatic rollback.
+- Improves onboarding, subscription controls, settings, history, and shortcut handling.
+- Reduces dictation latency and hardens audio-device and idle-state reliability.

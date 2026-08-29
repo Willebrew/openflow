@@ -1,0 +1,4 @@
+openflow 1.0.60
+
+- Spoken press enter only submits on a clear command: the whole utterance, or a trailing "press/hit enter/return" after the dictated text. In-body phrases such as "press enter to continue" stay as words.
+- When Spoken press enter is on, those command words are stripped and a real Return is sent. When the toggle is off, the words are left in the document.

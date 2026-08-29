@@ -1,0 +1,5 @@
+openflow 1.0.66
+
+- Signing out a session from website account settings now signs the Mac out even if Flow Hub is closed. Menu-bar clicks and screen wake notice the revoke. Your Groq key stays. Offline dictation is unchanged.
+- Subscription Free and Pro cards stay the same height in 880x640. Extra audio-leaves-device copy is gone so the hub does not scroll.
+- History Clear still asks before wiping clips, same confirm as delete.

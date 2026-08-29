@@ -1,0 +1,4 @@
+openflow 1.0.56
+
+- Settings → Subscription uses the same 18pt title-to-content gap as General, Permissions, Shortcuts, and Updates. One shared constant: settingsDetailTitleContentGap.
+- Header chrome is unchanged from 1.0.55: 24pt inset, 30pt icon, 22pt title, 11pt icon-to-title gap. Plan cards still contain Downgrade and Manage plan. Collapsed Subscription still does not scroll. Expanding Bring your own key may scroll.

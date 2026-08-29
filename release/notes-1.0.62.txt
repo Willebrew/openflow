@@ -1,0 +1,4 @@
+openflow 1.0.62
+
+- Dictation cleanup now reads the focused text field around the caret (Accessibility text before and after, plus nearby text) in Mail, Notes, and other fields, including a best-effort focused read in browsers.
+- Email letter wraps a greeting and sign-off only on a blank message. A second take continues the same letter and does not insert Dear [Recipient] or Thanks, [Your Name].

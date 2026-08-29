@@ -1,0 +1,4 @@
+openflow 1.0.46
+
+- Personal, Work, and Email are the same left-aligned hub rows as the Style library: moss icon, title, a one-line caption of when that context actually fires, and the assigned style on the right. Auto reads as Same as default (or Same as the current style name). They no longer look like centered disclosure headers, and Email no longer expands into a sign-off field.
+- Sign-off name lives under the Email letter built-in style. Specific apps stay a separate inset list of app to style.

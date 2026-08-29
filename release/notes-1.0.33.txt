@@ -1,0 +1,4 @@
+openflow 1.0.33
+
+- Home fits the Flow Hub pane with no scrolling: smaller time-saved hero, week vs last on one line, 7-day trend, three compact apps, one-line last clip, one-line More.
+- Setup journey stays on Home without adding a second page of scroll when you are still finishing permissions.

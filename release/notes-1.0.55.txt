@@ -1,0 +1,4 @@
+openflow 1.0.55
+
+- Settings → Subscription uses the same page-title chrome as General, Permissions, Shortcuts, and Updates: 24pt inset, 30pt icon, 15pt icon font, 22pt bold title, 11pt icon-to-title gap.
+- Plan cards still contain Downgrade and Manage plan. Collapsed Subscription still does not scroll. Expanding Bring your own key may scroll.

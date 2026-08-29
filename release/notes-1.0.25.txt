@@ -1,0 +1,5 @@
+openflow 1.0.25
+
+- Releasing the dictation hotkey now finishes the WAV (and converts to 16 kHz PCM) before restoring the previous mic or playing the chime, so AirPods takes with live levels can transcribe instead of failing with a bang.
+- Dictation capture avoids phone-call (HFP) audio treatment where possible, and hotkeys no longer steal typing in text fields or IME.
+- Cloud onboarding copy, Sign in/Checkout busy states, and docs/cloud-mode.md match the live device-code auth flow.

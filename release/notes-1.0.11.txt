@@ -1,0 +1,3 @@
+openflow 1.0.11
+
+- Keeps idle-pill click-through without resizing the HUD on hover, so the expand/collapse animation stays smooth.

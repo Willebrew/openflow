@@ -1,0 +1,5 @@
+openflow 1.0.21
+
+- Email dictation uses letter spacing and your sign-off name.
+- Spoken lists in Notion and docs become markdown lists.
+- Self-corrections such as scratch that apply on this Mac even without Pro cleanup.

@@ -1,0 +1,4 @@
+openflow 1.0.54
+
+- Settings → Subscription plan cards contain Downgrade and Manage plan again. The buttons sit inside the glass with normal padding. The Pro green border encloses Manage plan.
+- Prefer your own API key sits below the two cards with a real gap. Collapsed Subscription still does not scroll. Expanding Bring your own key may scroll.

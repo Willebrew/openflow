@@ -1,0 +1,3 @@
+openflow 1.0.15
+
+- Text fields keep a stable I-beam across the whole box, and clicking outside a field ends editing instead of leaving it selected.

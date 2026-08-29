@@ -1,0 +1,7 @@
+openflow 1.0.50
+
+- The product name is openflow in the UI, including Generate with openflow. It is no longer shown as OpenFlow.
+- Auto and Same as default use a textformat A instead of sparkles. Generate uses text.badge.plus.
+- Home uses house. openflow Pro uses infinity. Sparkle and star icons are gone from the Mac UI.
+- Settings → Subscription no longer scrolls when Bring your own key is collapsed. Prefer your own API key sits under the plans. Expanding the key field may scroll.
+- Top apps View all opens an Apps overlay with minutes. It no longer opens History. Last clip View history still does.

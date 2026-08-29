@@ -1,0 +1,4 @@
+openflow 1.0.23
+
+- Dictation follows the macOS microphone, including AirPods when they connect.
+- Settings → General has a Microphone picker (System Default or a specific device). Your choice is saved, and openflow falls back if that device is unplugged.

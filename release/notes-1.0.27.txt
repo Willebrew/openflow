@@ -1,0 +1,3 @@
+openflow 1.0.27
+
+- Logs Mac → Convex → Groq hop timings on a real dictation (macToConvexMs, convexUntilGroqStartMs, groqRoundTripMs, convexToMacMs) in Console and History.

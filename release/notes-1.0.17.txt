@@ -1,0 +1,5 @@
+openflow 1.0.17
+
+- Counts Home current streak by local calendar days, not UTC.
+- Maps cloud UTC daily stats onto local days at merge so US mornings no longer show a 0 streak after yesterday’s dictation.
+- Keeps the streak alive through today until the local day ends, even before the first dictation of the day.

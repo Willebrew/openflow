@@ -1,0 +1,5 @@
+openflow 1.0.67
+
+- Home This week shows the percent vs the same time last week. The prior-week word count is gone; the teal or coral percent stays. Sunday still says Last week.
+- Signing out on the website signs the Mac out while you only use the pill. Cloud 401 on transcribe, cleanup, or generate revokes the session. Menu-bar click, launch, wake, and the 12-minute timer ask NQL Auth, not Convex. Menu clicks are debounced. Your Groq key stays.
+- Subscription Pro lists the features only. The $6 included-spend line is gone.

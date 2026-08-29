@@ -1,0 +1,5 @@
+openflow 1.0.12
+
+- New installs start with an empty dictionary and no sample snippets. Debug logs stay off, Settings shows the real version, and placeholder copy is generic.
+- Cloud dictation uploads, audio capture cleanup, and terminal/auto-submit insertion are more reliable.
+- Input Monitoring denial is reported clearly, Accessibility handling is safer, and update confirmation paths are tighter.

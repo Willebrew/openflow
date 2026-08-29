@@ -1,0 +1,4 @@
+openflow 1.0.29
+
+- Bring-your-own Groq key works without a subscription: Whisper and cleanup go Mac → Groq with the Keychain key, not Convex transcribe-fast.
+- Remove the Settings → Plan Usage card. Home and Convex fleet stats are unchanged.

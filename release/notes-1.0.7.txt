@@ -1,0 +1,10 @@
+openflow 1.0.7
+
+- Skips onboarding after updates so existing setup stays in place.
+- Adds Copy latest dictation from the menu bar.
+- Polishes Dictionary and Snippets editing, including field layout and new-item cards.
+- Wires context awareness so dictation formatting can use the active app and URL.
+- Removes Transforms and pill appearance controls from Settings.
+- Refreshes Settings chrome to match Flow Hub.
+- Points cloud services at https://openflow-site-cvx.jottly.ai.
+- Cleans up history UI.

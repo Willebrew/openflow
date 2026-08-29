@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "releaseCandidate": "",
+  "date": "",
+  "reviewer": "",
+  "localGate": {
+    "passed": false,
+    "command": "scripts/check-local-release-gate.sh",
+    "notes": ""
+  },
+  "convexCloud": {
+    "deployment": "",
+    "verifyCloudBackendPassedWithDeployment": false,
+    "notes": ""
+  },
+  "manualInsertionMatrix": {
+    "reportPath": "docs/insertion-regression-report.json",
+    "validated": false,
+    "notes": ""
+  },
+  "cloudEndToEnd": {
+    "convexSiteURL": "",
+    "stripeWebhookVerified": false,
+    "nqlAuthSubscriptionSyncVerified": false,
+    "convexEntitlementSyncVerified": false,
+    "cloudTranscriptionWithoutLocalKeyVerified": false,
+    "cloudCleanupWithoutLocalKeyVerified": false,
+    "expiredSubscriptionBlocksGroqVerified": false,
+    "serverPayloadRetentionChecked": false,
+    "notes": ""
+  },
+  "cleanInstall": {
+    "onboardingOpened": false,
+    "microphonePermissionRecoveredWithoutRelaunch": false,
+    "accessibilityPermissionRecoveredWithoutRelaunch": false,
+    "inputMonitoringNotRequired": false,
+    "settingsPersistedAfterRestart": false,
+    "notes": ""
+  },
+  "releaseArtifact": {
+    "appPath": "",
+    "zipPath": "",
+    "sha256Path": "",
+    "signed": false,
+    "notarized": false,
+    "stapled": false,
+    "spctlAccepted": false,
+    "notes": ""
+  }
+}

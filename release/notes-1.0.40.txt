@@ -1,0 +1,4 @@
+openflow 1.0.40
+
+- Dictionary add is a header plus and an inline row composer (term → expansion, check to save). Search is full width. Pencil edits that row in place. No detached add/edit card, and no Add button beside search.
+- History and Dictionary no longer show item-count chips next to the title.

@@ -1,0 +1,3 @@
+openflow 1.0.63
+
+- Home This week and Time saved percents compare week-to-date with the same weekdays last week (Monday–Tuesday vs last Monday–Tuesday), not a partial week against last week’s full Monday–Sunday.

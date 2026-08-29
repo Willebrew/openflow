@@ -1,0 +1,5 @@
+openflow 1.0.58
+
+- Generate with openflow on the cloud path is included with Pro. Free accounts keep Write it myself. A stored Groq key still generates on the Mac for any plan.
+- Free testers no longer see “openflow Pro is unavailable” when generate cannot run. Tapping Generate explains Pro, and a failed generate says what actually failed.
+- Settings no longer shows Save raw STT text. Hide inactive pill now hides or shows the overlay as soon as you flip the switch.

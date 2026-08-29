@@ -1,0 +1,4 @@
+openflow 1.0.9
+
+- Fixes update verification so Developer ID checks use a valid codesign requirement.
+- Includes the 1.0.8 idle-pill click-through fix.

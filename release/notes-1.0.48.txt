@@ -1,0 +1,5 @@
+openflow 1.0.48
+
+- Creating a style no longer stacks Name, Describe, and Instructions with matching labels. + opens a compact Generate with OpenFlow or Write it myself choice. Generate is one describe field, then Name and Instructions after a draft. Manual is Name and Instructions only.
+- The current-style hero hides while that composer is open so it is not a fourth block.
+- Home Last clip sits the transcription on the same centered line as the app icon, timestamp, and copy button. It no longer stacks under the app name.

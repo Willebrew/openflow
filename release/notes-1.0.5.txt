@@ -1,0 +1,1 @@
+Simplifies Software Updates settings and removes technical security details.

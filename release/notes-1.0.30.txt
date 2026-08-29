@@ -1,0 +1,4 @@
+openflow 1.0.30
+
+- PROTOCOL v2: register each install with a Keychain Ed25519 device key and send signed heartbeats so the updater can confirm the live app.
+- Portal remote commands only apply after a signed heartbeat succeeds.

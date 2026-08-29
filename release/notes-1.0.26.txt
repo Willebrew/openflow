@@ -1,0 +1,4 @@
+openflow 1.0.26
+
+- Hold Fn (and Option hold) starts dictation again in any app, including when a text field is focused. 1.0.25 over-gated start on AX text-input detection.
+- Typed shortcuts (Control+Space, Option+Space) still do not start while you are typing.
