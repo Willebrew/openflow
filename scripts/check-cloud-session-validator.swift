@@ -38,7 +38,18 @@ enum CheckCloudSessionValidator {
     private static func checkStaticDecision() {
         precondition(
             CloudSessionValidator.validity(statusCode: 401, body: Data(#"{"active":false}"#.utf8)) == .revoked,
-            "401 must be revoked"
+            "401 with active:false must be revoked"
+        )
+        precondition(
+            CloudSessionValidator.validity(statusCode: 401, body: Data()) == .indeterminate,
+            "401 without an introspect body must be indeterminate"
+        )
+        precondition(
+            CloudSessionValidator.validity(
+                statusCode: 401,
+                body: Data("<html>unauthorized</html>".utf8)
+            ) == .indeterminate,
+            "401 HTML must be indeterminate"
         )
         precondition(
             CloudSessionValidator.validity(
@@ -74,7 +85,10 @@ enum CheckCloudSessionValidator {
             body: Data(#"{"active":false}"#.utf8)
         )
         let revokedResult = await CloudSessionValidator(session: revoked).validate(token: "tok")
-        precondition(revokedResult == .revoked, "mocked 401 must be revoked")
+        precondition(revokedResult == .revoked, "mocked 401 active:false must be revoked")
+        let html401 = MockCloudHTTPSession(statusCode: 401, body: Data("<html>nope</html>".utf8))
+        let htmlResult = await CloudSessionValidator(session: html401).validate(token: "tok")
+        precondition(htmlResult == .indeterminate, "mocked 401 HTML must be indeterminate")
         precondition(
             revoked.lastRequest?.url?.path.hasSuffix("/api/openflow/introspect") == true,
             "introspect path must be /api/openflow/introspect"

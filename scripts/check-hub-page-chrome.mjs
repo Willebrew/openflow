@@ -217,8 +217,10 @@ assert(cloudClient.includes("if http.statusCode == 401"),
        "authenticated cloud 401 must be detected");
 assert(cloudClient.includes("throw OpenflowError.cloudSessionRevoked"),
        "cloud 401 with a token must be cloudSessionRevoked");
-assert(coordinatorSrc.includes("_ = consumeCloudSessionError(error)"),
+assert(coordinatorSrc.includes("_ = await consumeCloudSessionError(error)"),
        "pill dictation catch must revoke on cloudSessionRevoked");
+assert(coordinatorSrc.includes("confirmRemoteCloudRevocation"),
+       "Convex 401 must re-check nql-auth before deleting the cloud token");
 assert(flowUI.includes("static let settingsDetailHeaderInset: CGFloat = 24"),
        "Settings detail headers must share a 24pt inset with General");
 assert(flowUI.includes("static let settingsDetailHeaderIconSize: CGFloat = 30"),

@@ -430,10 +430,15 @@ struct SettingsView: View {
             return try await cloudBillingURL(action, baseURL: baseURL)
         } catch {
             guard isRecoverableCloudAuthError(error) else { throw error }
-            await MainActor.run {
-                if case OpenflowError.cloudSessionRevoked = error {
-                    coordinator.applyRemoteCloudRevocation()
+            if case OpenflowError.cloudSessionRevoked = error {
+                let cleared = await coordinator.confirmRemoteCloudRevocation()
+                if !cleared {
+                    throw OpenflowError.cloudProviderUnavailable(
+                        "Couldn’t connect to openflow right now. Please try again."
+                    )
                 }
+            }
+            await MainActor.run {
                 cloudStatus = "Opening secure sign in..."
             }
             cloudAuth.signOut()
@@ -499,19 +504,25 @@ struct SettingsView: View {
                 }
             }
         } catch {
-            await MainActor.run {
-                if case OpenflowError.cloudSessionRevoked = error {
-                    coordinator.applyRemoteCloudRevocation()
+            var statusError = error
+            if case OpenflowError.cloudSessionRevoked = error {
+                let cleared = await coordinator.confirmRemoteCloudRevocation()
+                if !cleared {
+                    statusError = OpenflowError.cloudProviderUnavailable(
+                        "Couldn’t connect to openflow right now. Please try again."
+                    )
                 }
+            }
+            await MainActor.run {
                 applyCloudSessionSurface()
-                if case OpenflowError.cloudAuthenticationRequired = error {
+                if case OpenflowError.cloudAuthenticationRequired = statusError {
                     cloudSignedIn = false
                 }
                 cloudEntitled = false
                 cloudTier = nil
                 coordinator.cloudTier = nil
                 checkingCloudEntitlement = false
-                cloudStatus = cloudMessage(for: error)
+                cloudStatus = cloudMessage(for: statusError)
             }
         }
     }

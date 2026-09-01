@@ -65,23 +65,22 @@ struct CloudSessionValidator {
     }
 
     static func validity(statusCode: Int, body: Data) -> CloudSessionValidity {
-        if statusCode == 401 {
+        let parsed = decodeIntrospectBody(body)
+        if parsed?.active == false {
             return .revoked
         }
         guard (200..<300).contains(statusCode) else {
             return .indeterminate
         }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let parsed = try? decoder.decode(CloudSessionIntrospectResponse.self, from: body) else {
-            return .indeterminate
-        }
-        if parsed.active == true {
+        if parsed?.active == true {
             return .valid
         }
-        if parsed.active == false {
-            return .revoked
-        }
         return .indeterminate
+    }
+
+    private static func decodeIntrospectBody(_ body: Data) -> CloudSessionIntrospectResponse? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(CloudSessionIntrospectResponse.self, from: body)
     }
 }

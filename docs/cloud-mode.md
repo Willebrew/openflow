@@ -48,14 +48,14 @@ revalidates the stored Keychain token with
 `{"product":"openflow"}`) at launch before signed-in UI, when the app becomes
 active, on system wake, and every 12 minutes.
 
-- `401` or `{active:false}`: `CloudAuthService.signOut()` /
+- `{active:false}` (HTTP 200 or 401): `CloudAuthService.signOut()` /
   `KeychainService.deleteCloudTokens()` only. BYO Groq (`openflow.groq`) stays.
   Signed-in surfaces flip off. Message: “Your session was signed out from your
   account settings. Sign in again to use openflow cloud.”
-- Transport errors and non-401 HTTP: **indeterminate**. No state change.
-  Airplane mode works as before.
-- Authenticated cloud `401` while a token was present uses the same revoked
-  path (`OpenflowError.cloudSessionRevoked`). Missing token stays
+- Transport errors, 5xx, 429, and 401 without a parseable `{active:false}`
+  body: **indeterminate**. No state change. Airplane mode works as before.
+- Authenticated Convex `401` is a hint only. The Mac re-checks nql-auth
+  introspect before deleting the token. Missing token stays
   `cloudAuthenticationRequired` so sign-in prompts still make sense.
 
 ## Cloud HTTP routes the Mac calls

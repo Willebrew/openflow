@@ -659,10 +659,15 @@ struct OnboardingFlowView: View {
             return try await cloudService.checkoutURL(baseURL: baseURL)
         } catch {
             guard isRecoverableCloudAuthError(error) else { throw error }
-            await MainActor.run {
-                if case OpenflowError.cloudSessionRevoked = error {
-                    coordinator.applyRemoteCloudRevocation()
+            if case OpenflowError.cloudSessionRevoked = error {
+                let cleared = await coordinator.confirmRemoteCloudRevocation()
+                if !cleared {
+                    throw OpenflowError.cloudProviderUnavailable(
+                        "Couldn’t connect to openflow right now. Please try again."
+                    )
                 }
+            }
+            await MainActor.run {
                 cloudStatus = "Opening secure sign in..."
             }
             cloudAuth.signOut()
@@ -710,15 +715,21 @@ struct OnboardingFlowView: View {
                 }
             }
         } catch {
-            await MainActor.run {
-                if case OpenflowError.cloudSessionRevoked = error {
-                    coordinator.applyRemoteCloudRevocation()
+            var statusError = error
+            if case OpenflowError.cloudSessionRevoked = error {
+                let cleared = await coordinator.confirmRemoteCloudRevocation()
+                if !cleared {
+                    statusError = OpenflowError.cloudProviderUnavailable(
+                        "Couldn’t connect to openflow right now. Please try again."
+                    )
                 }
+            }
+            await MainActor.run {
                 cloudEntitled = false
                 cloudTier = nil
                 coordinator.cloudTier = nil
                 checkingCloudEntitlement = false
-                cloudStatus = cloudMessage(for: error)
+                cloudStatus = cloudMessage(for: statusError)
             }
         }
     }

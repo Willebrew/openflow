@@ -127,6 +127,8 @@ rg -F "case cloudSessionRevoked" openflow/Models/DictationModels.swift >/dev/nul
   fail "authenticated 401 must map to cloudSessionRevoked, not the no-token prompt"
 rg -F "applyRemoteCloudRevocation" openflow/Services/DictationCoordinator.swift >/dev/null ||
   fail "revoked sessions must clear cloud UI through applyRemoteCloudRevocation"
+rg -F "confirmRemoteCloudRevocation" openflow/Services/DictationCoordinator.swift >/dev/null ||
+  fail "Convex 401 must re-check nql-auth before deleting the cloud token"
 rg -F "revalidateStoredCloudSession()" openflow/App/MenuBarController.swift >/dev/null ||
   fail "menu-bar clicks must introspect so revoke is not gated on opening Flow Hub"
 rg -F "CloudSessionValidator.menuRevalidateInterval" openflow/Services/DictationCoordinator.swift >/dev/null ||

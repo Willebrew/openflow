@@ -279,9 +279,23 @@ final class DictationCoordinator: ObservableObject {
         }
         noteSetupReadinessChanged()
         if hadToken {
+            NSLog("[openflow-session] signed out after nql-auth reported an inactive session")
             log("cloud session revoked remotely")
         }
         NotificationCenter.default.post(name: .openflowCloudSessionDidChange, object: nil)
+    }
+
+    /// Convex 401 is not proof the NQL Auth session is dead. Confirm with introspect.
+    @discardableResult
+    func confirmRemoteCloudRevocation() async -> Bool {
+        switch await cloudAuth.validateStoredSession() {
+        case .revoked:
+            applyRemoteCloudRevocation()
+            return true
+        case .valid, .indeterminate:
+            NSLog("[openflow-session] keeping cloud token; nql-auth did not report active:false")
+            return false
+        }
     }
 
     func beginDictation(mode: DictationMode, requestedAt: Date = Date()) {
@@ -368,7 +382,7 @@ final class DictationCoordinator: ObservableObject {
                 applyCloudStats(remoteStats)
             } catch {
                 applyingCloudPreferences = false
-                if consumeCloudSessionError(error) { return }
+                if await consumeCloudSessionError(error) { return }
                 log("account sync unavailable: \(error.localizedDescription)")
             }
         }
@@ -442,9 +456,9 @@ final class DictationCoordinator: ObservableObject {
     }
 
     @discardableResult
-    private func consumeCloudSessionError(_ error: Error) -> Bool {
+    private func consumeCloudSessionError(_ error: Error) async -> Bool {
         if let openflowError = error as? OpenflowError, openflowError.isCloudSessionRevoked {
-            applyRemoteCloudRevocation()
+            _ = await confirmRemoteCloudRevocation()
             return true
         }
         if case OpenflowError.cloudAuthenticationRequired = error {
@@ -488,7 +502,7 @@ final class DictationCoordinator: ObservableObject {
             applyCloudStats(try await cloud.stats(baseURL: baseURL))
             return true
         } catch {
-            if consumeCloudSessionError(error) { return false }
+            if await consumeCloudSessionError(error) { return false }
             log("stats refresh unavailable: \(error.localizedDescription)")
             return false
         }
@@ -502,7 +516,7 @@ final class DictationCoordinator: ObservableObject {
             do {
                 try await cloud.savePreferences(snapshot, baseURL: baseURL)
             } catch {
-                if consumeCloudSessionError(error) { return }
+                if await consumeCloudSessionError(error) { return }
                 log("preference sync failed: \(error.localizedDescription)")
             }
         }
@@ -534,7 +548,7 @@ final class DictationCoordinator: ObservableObject {
             applyCloudStats(try await cloud.stats(baseURL: baseURL))
             return true
         } catch {
-            if consumeCloudSessionError(error) { return false }
+            if await consumeCloudSessionError(error) { return false }
             log("activity sync failed: \(error.localizedDescription)")
             return false
         }
@@ -755,8 +769,18 @@ final class DictationCoordinator: ObservableObject {
                     applyPillVisibility()
                     return
                 }
-                _ = consumeCloudSessionError(error)
-                showError(error, sessionID: activeSession.id)
+                _ = await consumeCloudSessionError(error)
+                let stillSignedIn = ((try? KeychainService.shared.cloudSessionToken()) ?? nil)?.isEmpty == false
+                if case OpenflowError.cloudSessionRevoked = error, stillSignedIn {
+                    showError(
+                        OpenflowError.cloudProviderUnavailable(
+                            "Couldn’t connect to openflow right now. Please try again."
+                        ),
+                        sessionID: activeSession.id
+                    )
+                } else {
+                    showError(error, sessionID: activeSession.id)
+                }
                 saveFailedDictationHistory(error: error,
                                            session: activeSession,
                                            transcript: transcribedResult,
@@ -820,7 +844,7 @@ final class DictationCoordinator: ObservableObject {
         do {
             cloudTier = try await cloud.entitlement(baseURL: baseURL).tier
         } catch {
-            if consumeCloudSessionError(error) { return }
+            if await consumeCloudSessionError(error) { return }
             log("entitlement refresh unavailable: \(error.localizedDescription)")
         }
     }
