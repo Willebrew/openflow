@@ -23,6 +23,13 @@ client-side only.
 8. Confirm a fourth Mac on the same account can transcribe; Home totals include
    that Mac. Usage cutoff still blocks transcribe when secret rails are hit.
 9. Confirm local bring-your-own-key mode still validates and works.
+10. Revoke the session from website account settings, then click the menu-bar
+    icon. Within one introspect the Mac signs out cloud only, shows “Your
+    session was signed out from your account settings…”, and any BYO Groq key
+    remains in Keychain.
+11. With a live session, force a backend 401 (for example a stale deploy or
+    proxy). The Mac must stay signed in and show “Couldn’t connect to openflow
+    right now. Please try again.” rather than deleting the token.
 
 ## Evidence To Keep
 
