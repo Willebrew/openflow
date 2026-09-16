@@ -46,17 +46,67 @@ Website account settings delete the NQL Auth session immediately. The Mac
 revalidates the stored Keychain token with
 `POST https://auth.neuroquestlabs.ai/api/openflow/introspect` (Bearer token,
 `{"product":"openflow"}`) at launch before signed-in UI, when the app becomes
-active, on system wake, and every 12 minutes.
+active, on system wake, every 12 minutes
+(`CloudSessionValidator.refreshInterval`), and on every menu-bar click
+(`DictationCoordinator.revalidateStoredCloudSession`, debounced to one call per
+15 seconds via `CloudSessionValidator.menuRevalidateInterval`).
 
-- `{active:false}` (HTTP 200 or 401): `CloudAuthService.signOut()` /
-  `KeychainService.deleteCloudTokens()` only. BYO Groq (`openflow.groq`) stays.
-  Signed-in surfaces flip off. Message: “Your session was signed out from your
-  account settings. Sign in again to use openflow cloud.”
-- Transport errors, 5xx, 429, and 401 without a parseable `{active:false}`
-  body: **indeterminate**. No state change. Airplane mode works as before.
-- Authenticated Convex `401` is a hint only. The Mac re-checks nql-auth
-  introspect before deleting the token. Missing token stays
-  `cloudAuthenticationRequired` so sign-in prompts still make sense.
+`CloudSessionValidator.validity(statusCode:body:)` is the only place that
+decides whether a session is dead. The rule is "the body decides, not the
+status code":
+
+| Introspect response                               | Verdict         | Effect                       |
+| ------------------------------------------------- | --------------- | ---------------------------- |
+| Body parses with `active: false` (any status)     | `revoked`       | cloud token deleted          |
+| 2xx with `active: true`                           | `valid`         | none                         |
+| 2xx without an `active` field                     | `indeterminate` | none                         |
+| 401 with empty, HTML, or non-JSON body            | `indeterminate` | none                         |
+| 5xx, 429, other non-2xx without `active: false`   | `indeterminate` | none                         |
+| Transport error or timeout (5s)                   | `indeterminate` | none                         |
+
+- `revoked`: `DictationCoordinator.applyRemoteCloudRevocation()` runs
+  `CloudAuthService.signOut()` / `KeychainService.deleteCloudTokens()` only.
+  BYO Groq (`openflow.groq`) stays, and if a BYO key exists `providerMode`
+  falls back to `localGroq`. Cloud stats and tier reset, signed-in surfaces
+  flip off, and `.openflowCloudSessionDidChange` is posted. Message
+  (`CloudSessionValidator.revokedUserMessage`): “Your session was signed out
+  from your account settings. Sign in again to use openflow cloud.”
+- `indeterminate`: no state change. Airplane mode works as before.
+
+### Convex `401` is a hint, not a verdict
+
+`OpenFlowCloudService` throws `OpenflowError.cloudSessionRevoked` when an
+authenticated cloud call (a token was present) returns HTTP 401. That error
+never deletes the token by itself. Every catch site routes it through
+`DictationCoordinator.confirmRemoteCloudRevocation()`, which re-runs introspect
+and returns `true` only when nql-auth answers `active: false`:
+
+```swift
+// DictationCoordinator
+func confirmRemoteCloudRevocation() async -> Bool {
+    switch await cloudAuth.validateStoredSession() {
+    case .revoked:            applyRemoteCloudRevocation(); return true
+    case .valid, .indeterminate: return false   // keep the token
+    }
+}
+```
+
+When confirmation fails (`false`), the user stays signed in and the surface
+that hit the 401 shows a retryable
+`OpenflowError.cloudProviderUnavailable("Couldn’t connect to openflow right
+now. Please try again.")` instead of the revoked message. This applies to the
+dictation pill error, Settings and onboarding entitlement checks, and the Stripe
+checkout/portal links. A missing token stays `cloudAuthenticationRequired` so
+sign-in prompts still make sense.
+
+Diagnostics: look for `[openflow-session]` in the unified log. "signed out
+after nql-auth reported an inactive session" means the token was deleted;
+"keeping cloud token; nql-auth did not report active:false" means a 401 was
+seen but not confirmed.
+
+`scripts/check-cloud-session-validator.swift` pins the decision table above and
+`scripts/verify-production-readiness.sh` fails if a catch site bypasses
+`confirmRemoteCloudRevocation`.
 
 ## Cloud HTTP routes the Mac calls
 
