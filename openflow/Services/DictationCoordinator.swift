@@ -833,17 +833,8 @@ final class DictationCoordinator: ObservableObject {
         metrics.provider = result.provider
         metrics.model = result.model
         currentMetrics = metrics
-        history.add(DictationHistoryItem(timestamp: Date(),
-                                         finalText: instruction,
-                                         rawTranscript: instruction,
-                                         appName: formattingContext.activeAppName,
-                                         bundleID: formattingContext.bundleID,
-                                         category: formattingContext.category,
-                                         stylePreset: formattingContext.stylePreset,
-                                         insertionSucceeded: result.completed,
-                                         insertion: nil,
-                                         metrics: metrics),
-                    settings: settings)
+        // Voice-agent runs are not dictation: they never inserted text into a
+        // field, so they must not appear in the transcription history.
         log("voice agent finished: completed=\(result.completed), steps=\(result.steps), \(result.summary)")
         _ = await refreshCloudStatsIfSignedIn()
         guard processingSessionID == session.id else { return }

@@ -8,6 +8,7 @@ enum AgentAction {
     case pressKey(String)
     case scroll(elementID: Int?, direction: ScrollDirection)
     case openApp(String)
+    case openURL(String)
 
     enum ScrollDirection: String {
         case up, down, left, right
@@ -71,6 +72,9 @@ final class AgentActionExecutor {
 
         case .openApp(let name):
             return openApp(named: name)
+
+        case .openURL(let raw):
+            return openURL(raw)
         }
     }
 
@@ -153,24 +157,210 @@ final class AgentActionExecutor {
         return true
     }
 
+    /// Opens a URL in the default handler. Adds https:// when the speech
+    /// transcript produced a bare domain, and falls back to opening System
+    /// Settings itself when an x-apple.systempreferences deep link fails.
+    private func openURL(_ raw: String) -> Outcome {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withScheme = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+        guard let url = URL(string: withScheme) else {
+            return Outcome(ok: false, detail: "bad URL \(raw)")
+        }
+        if NSWorkspace.shared.open(url) {
+            return Outcome(ok: true, detail: "opened \(withScheme)")
+        }
+        if trimmed.hasPrefix("x-apple.systempreferences") {
+            return openApp(named: "System Settings")
+        }
+        return Outcome(ok: false, detail: "could not open \(withScheme)")
+    }
+
+    /// True when the string looks like a web address rather than an app name:
+    /// no spaces, and a trailing label of at least two letters (a TLD), which
+    /// also excludes version strings like 1.0.71.
+    static func looksLikeDomain(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains(" ") else { return false }
+        let pattern = #"^(?:https?://|www\.)?[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}(?::\d+)?(?:/[^\s]*)?$"#
+        return trimmed.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// Spoken app names -> bundle identifiers, so ASR output like "settings",
+    /// "imessage", or "arc" resolves to the real app. Tried in order.
+    private static let appAliases: [String: [String]] = [
+        "settings": ["com.apple.systempreferences"],
+        "system settings": ["com.apple.systempreferences"],
+        "system preferences": ["com.apple.systempreferences"],
+        "preferences": ["com.apple.systempreferences"],
+        "prefs": ["com.apple.systempreferences"],
+        "messages": ["com.apple.MobileSMS", "com.apple.iChat"],
+        "imessage": ["com.apple.MobileSMS", "com.apple.iChat"],
+        "terminal": ["com.apple.Terminal"],
+        "iterm": ["com.googlecode.iterm2"],
+        "iterm2": ["com.googlecode.iterm2"],
+        "ghostty": ["com.mitchellh.ghostty"],
+        "safari": ["com.apple.Safari"],
+        "chrome": ["com.google.Chrome"],
+        "google chrome": ["com.google.Chrome"],
+        "arc": ["company.thebrowser.Browser"],
+        "dia": ["company.thebrowser.dia"],
+        "firefox": ["org.mozilla.firefox"],
+        "edge": ["com.microsoft.edgemac"],
+        "microsoft edge": ["com.microsoft.edgemac"],
+        "brave": ["com.brave.Browser"],
+        "notes": ["com.apple.Notes"],
+        "mail": ["com.apple.mail"],
+        "calendar": ["com.apple.iCal"],
+        "reminders": ["com.apple.reminders"],
+        "photos": ["com.apple.Photos"],
+        "music": ["com.apple.Music"],
+        "finder": ["com.apple.finder"],
+        "calculator": ["com.apple.calculator"],
+        "preview": ["com.apple.Preview"],
+        "xcode": ["com.apple.dt.Xcode"],
+        "slack": ["com.tinyspeck.slackmacgap"],
+        "discord": ["com.hnc.Discord"],
+        "spotify": ["com.spotify.client"],
+        "notion": ["notion.id"],
+        "zoom": ["us.zoom.xos"],
+        "code": ["com.microsoft.VSCode"],
+        "vs code": ["com.microsoft.VSCode"],
+        "visual studio code": ["com.microsoft.VSCode"],
+        "telegram": ["ru.keepcoder.Telegram"],
+        "whatsapp": ["net.whatsapp.WhatsApp"],
+        "facetime": ["com.apple.FaceTime"],
+        "maps": ["com.apple.Maps"],
+        "podcasts": ["com.apple.podcasts"],
+        "app store": ["com.apple.AppStore"],
+        "textedit": ["com.apple.TextEdit"],
+        "text edit": ["com.apple.TextEdit"],
+        "activity monitor": ["com.apple.ActivityMonitor"],
+        "pages": ["com.apple.iWork.Pages"],
+        "numbers": ["com.apple.iWork.Numbers"],
+        "keynote": ["com.apple.iWork.Keynote"],
+        "freeform": ["com.apple.freeform"]
+    ]
+
+    /// Directories that can hold launchable .app bundles. /System/Applications
+    /// is where Messages, System Settings, and most bundled apps live.
+    private static var appDirectories: [URL] {
+        var dirs = [
+            "/Applications",
+            "/Applications/Utilities",
+            "/System/Applications",
+            "/System/Applications/Utilities"
+        ].map { URL(fileURLWithPath: $0) }
+        if let home = ProcessInfo.processInfo.environment["HOME"] {
+            dirs.append(URL(fileURLWithPath: home).appendingPathComponent("Applications"))
+        }
+        return dirs
+    }
+
+    private static func normalizedAppName(_ name: String) -> String {
+        var needle = name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["the ", "open ", "launch ", "start ", "go to "] where needle.hasPrefix(prefix) {
+            needle = String(needle.dropFirst(prefix.count))
+        }
+        if needle.hasSuffix(" app"), needle.count > 4 {
+            needle = String(needle.dropLast(4))
+        }
+        return needle.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func openApp(named name: String) -> Outcome {
-        let needle = name.lowercased()
-        if let running = NSWorkspace.shared.runningApplications.first(where: {
-            ($0.localizedName ?? "").lowercased() == needle ||
+        let needle = Self.normalizedAppName(name)
+        guard !needle.isEmpty else {
+            return Outcome(ok: false, detail: "no app matching \(name)")
+        }
+        if needle == "spotlight" {
+            return postCommandSpace()
+                ? Outcome(ok: true, detail: "opened Spotlight")
+                : Outcome(ok: false, detail: "could not open Spotlight")
+        }
+
+        let bundleIDs = Self.appAliases[needle] ?? []
+        // Already frontmost: activating again is a no-op, so short-circuit
+        // instead of letting the loop burn a step on it.
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           appMatches(frontmost, needle: needle, bundleIDs: bundleIDs) {
+            return Outcome(ok: true, detail: "\(frontmost.localizedName ?? name) already frontmost")
+        }
+        for bundleID in bundleIDs {
+            if let running = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier?.caseInsensitiveCompare(bundleID) == .orderedSame
+            }) {
+                running.activate(options: [.activateAllWindows])
+                return Outcome(ok: true, detail: "activated \(running.localizedName ?? name)")
+            }
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                launch(at: url)
+                return Outcome(ok: true, detail: "launched \(url.deletingPathExtension().lastPathComponent)")
+            }
+        }
+        // Running apps by name: exact first, then substring.
+        let running = NSWorkspace.shared.runningApplications
+        if let match = running.first(where: {
+            ($0.localizedName ?? "").caseInsensitiveCompare(needle) == .orderedSame
+        }) ?? running.first(where: {
+            ($0.localizedName ?? "").lowercased().contains(needle) ||
             ($0.bundleIdentifier ?? "").lowercased().contains(needle)
         }) {
-            running.activate(options: [.activateAllWindows])
-            return Outcome(ok: true, detail: "activated \(running.localizedName ?? name)")
+            match.activate(options: [.activateAllWindows])
+            return Outcome(ok: true, detail: "activated \(match.localizedName ?? name)")
         }
-        let applications = URL(fileURLWithPath: "/Applications")
-        if let urls = try? FileManager.default.contentsOfDirectory(at: applications, includingPropertiesForKeys: nil),
-           let match = urls.first(where: { $0.deletingPathExtension().lastPathComponent.lowercased() == needle }) {
-            let config = NSWorkspace.OpenConfiguration()
-            config.activates = true
-            NSWorkspace.shared.openApplication(at: match, configuration: config) { _, _ in }
-            return Outcome(ok: true, detail: "launched \(match.deletingPathExtension().lastPathComponent)")
+        // Installed apps: exact name, then substring across all app dirs.
+        for dir in Self.appDirectories {
+            guard let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
+            if let match = urls.first(where: {
+                $0.pathExtension == "app" &&
+                $0.deletingPathExtension().lastPathComponent.caseInsensitiveCompare(needle) == .orderedSame
+            }) {
+                launch(at: match)
+                return Outcome(ok: true, detail: "launched \(match.deletingPathExtension().lastPathComponent)")
+            }
+        }
+        for dir in Self.appDirectories {
+            guard let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
+            if let match = urls.first(where: {
+                $0.pathExtension == "app" &&
+                $0.deletingPathExtension().lastPathComponent.lowercased().contains(needle)
+            }) {
+                launch(at: match)
+                return Outcome(ok: true, detail: "launched \(match.deletingPathExtension().lastPathComponent)")
+            }
         }
         return Outcome(ok: false, detail: "no app matching \(name)")
+    }
+
+    private func appMatches(_ app: NSRunningApplication, needle: String, bundleIDs: [String]) -> Bool {
+        if let name = app.localizedName, name.caseInsensitiveCompare(needle) == .orderedSame {
+            return true
+        }
+        if let bundleID = app.bundleIdentifier {
+            if bundleIDs.contains(where: { $0.caseInsensitiveCompare(bundleID) == .orderedSame }) ||
+                bundleID.caseInsensitiveCompare(needle) == .orderedSame {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func launch(at url: URL) {
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in }
+    }
+
+    private func postCommandSpace() -> Bool {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 49, keyDown: false) else {
+            return false
+        }
+        down.flags = .maskCommand
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        return true
     }
 
     // MARK: - Key table

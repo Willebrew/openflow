@@ -14,7 +14,7 @@ struct AgentRunResult {
 /// until the goal is done, aborted, or the step cap is hit.
 @MainActor
 final class JevAgentService {
-    static let maxSteps = 8
+    static let maxSteps = 16
     private static let completionThreshold = 0.75
     private static let confidenceFloor = 0.5
     private static let settleDuration: Duration = .milliseconds(800)
@@ -25,11 +25,15 @@ final class JevAgentService {
     private let screen = ScreenStateService()
     private let executor = AgentActionExecutor()
     private var actionLog: [String] = []
+    private var lastActionSignature: String?
+    private var repeatCount = 0
 
     func run(instruction: String,
              settings: UserSettings,
              baseURL: URL) async -> AgentRunResult {
         actionLog = []
+        lastActionSignature = nil
+        repeatCount = 0
         var model = "jev-latest"
         for step in 1...Self.maxSteps {
             guard let state = screen.capture() else {
@@ -79,6 +83,16 @@ final class JevAgentService {
             case "abort":
                 return aborted("Jev aborted the task", steps: step - 1, model: model)
             default:
+                let signature = actionSignature(kind, answers: answers, state: state)
+                if signature == lastActionSignature {
+                    repeatCount += 1
+                    if repeatCount >= 2 {
+                        return aborted("stuck repeating \(kind)", steps: step, model: model)
+                    }
+                } else {
+                    repeatCount = 0
+                    lastActionSignature = signature
+                }
                 let outcome = perform(kind, answers: answers, state: state, instruction: instruction)
                 actionLog.append("step \(step): \(kind) -> \(outcome.detail)")
                 onProgress?("Step \(step): \(outcome.detail)")
@@ -138,9 +152,54 @@ final class JevAgentService {
             guard let app = answers["app"]?.choice, !app.isEmpty else {
                 return .init(ok: false, detail: "open_app had no app")
             }
+            // A domain never means an app: "google" from "go to google.com"
+            // resolves to the URL in the goal instead.
+            if AgentActionExecutor.looksLikeDomain(app) {
+                return executor.execute(.openURL(app), in: state)
+            }
+            if let domain = Self.urlCandidates(in: instruction).first(where: {
+                Self.normalizedAppText($0).hasPrefix(Self.normalizedAppText(app))
+            }) {
+                return executor.execute(.openURL(domain), in: state)
+            }
+            if Self.wantsAppearancePane(instruction), Self.isSettingsName(app) {
+                return executor.execute(
+                    .openURL("x-apple.systempreferences:com.apple.Appearance-Settings.extension"),
+                    in: state)
+            }
             return executor.execute(.openApp(app), in: state)
+        case "open_url":
+            let raw = answers["url"]?.choice.flatMap { $0 == "none" ? nil : $0 }
+                ?? Self.urlCandidates(in: instruction).first
+            guard let raw, !raw.isEmpty else {
+                return .init(ok: false, detail: "open_url had no URL")
+            }
+            return executor.execute(.openURL(raw), in: state)
         default:
             return .init(ok: false, detail: "unknown action \(kind)")
+        }
+    }
+
+    /// Stable identity for a proposed action so the loop can detect Jev
+    /// re-issuing the same no-progress step (element ids renumber per capture,
+    /// so clicks sign on the element's serialized form, not the id).
+    private func actionSignature(_ kind: String,
+                                 answers: [String: AgentAnswer],
+                                 state: AgentScreenState) -> String {
+        switch kind {
+        case "click", "type":
+            let element = chosenElement(from: answers, state: state)
+            return "\(kind)|\(element?.serialized ?? "?")|\(answers["text"]?.choice ?? "")"
+        case "press_key":
+            return "\(kind)|\(answers["key"]?.choice ?? "")"
+        case "scroll":
+            return "\(kind)|\(answers["direction"]?.choice ?? "")|\(answers["element"]?.choice ?? "")"
+        case "open_app":
+            return "\(kind)|\(answers["app"]?.choice ?? "")"
+        case "open_url":
+            return "\(kind)|\(answers["url"]?.choice ?? "")"
+        default:
+            return kind
         }
     }
 
@@ -186,6 +245,7 @@ final class JevAgentService {
                     "press_key": AnyCodableValue("Press a keyboard key such as Return, Tab, or Escape"),
                     "scroll": AnyCodableValue("Scroll to reveal more content"),
                     "open_app": AnyCodableValue("Open or switch to a different application"),
+                    "open_url": AnyCodableValue("Open a URL or web address from the goal in the default browser"),
                     "abort": AnyCodableValue("Stop; the goal cannot be achieved safely or confidently")
                 ]),
             "element": AgentQuestionSpec(
@@ -221,8 +281,12 @@ final class JevAgentService {
                 criteria: textCandidates(from: instruction)),
             "app": AgentQuestionSpec(
                 type: "choice",
-                instructions: "If the next action opens an app, which application best serves the goal?",
-                criteria: appCriteria(for: state, instruction: instruction))
+                instructions: "If the next action opens an app, which application best serves the goal? When the goal names a web address, prefer the open_url action instead.",
+                criteria: appCriteria(for: state, instruction: instruction)),
+            "url": AgentQuestionSpec(
+                type: "choice",
+                instructions: "If the next action opens a web address, which URL from the goal should be opened?",
+                criteria: urlCriteria(for: instruction))
         ]
         return questions
     }
@@ -235,6 +299,45 @@ final class JevAgentService {
             criteria[String(element.id)] = AnyCodableValue(element.serialized)
         }
         return criteria
+    }
+
+    private func urlCriteria(for instruction: String) -> [String: AnyCodableValue] {
+        var criteria: [String: AnyCodableValue] = [
+            "none": AnyCodableValue("No URL should be opened")
+        ]
+        for candidate in Self.urlCandidates(in: instruction) {
+            criteria[candidate] = AnyCodableValue("The web address spoken in the goal")
+        }
+        return criteria
+    }
+
+    /// URL-like spans in the instruction: full URLs and bare domains such as
+    /// google.com or docs.typesafe.ai/introduction. Speech output sometimes
+    /// writes "google dot com", which is normalized first.
+    private static func urlCandidates(in text: String) -> [String] {
+        let normalized = text.replacingOccurrences(
+            of: " dot ", with: ".", options: [.caseInsensitive])
+        let pattern = #"\b((?:https?://|www\.)[^\s]+|[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}(?::\d+)?(?:/[^\s]*)?)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
+        return regex.matches(in: normalized, range: range).compactMap { match in
+            Range(match.range(at: 1), in: normalized).map { String(normalized[$0]) }
+        }
+    }
+
+    private static func normalizedAppText(_ text: String) -> String {
+        text.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    private static func wantsAppearancePane(_ instruction: String) -> Bool {
+        instruction.range(
+            of: #"\b(light mode|dark mode|appearance|dark appearance|light appearance)\b"#,
+            options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    private static func isSettingsName(_ name: String) -> Bool {
+        ["settings", "system settings", "system preferences", "preferences", "prefs"]
+            .contains(name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func appCriteria(for state: AgentScreenState, instruction: String) -> [String: AnyCodableValue] {
