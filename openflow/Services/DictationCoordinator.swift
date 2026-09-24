@@ -620,8 +620,7 @@ final class DictationCoordinator: ObservableObject {
 
                 if shouldRunVoiceAgent(for: activeSession) {
                     await runVoiceAgent(instruction: transcribed.text,
-                                        session: activeSession,
-                                        formattingContext: formattingContext)
+                                        session: activeSession)
                     return
                 }
 
@@ -813,8 +812,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func runVoiceAgent(instruction: String,
-                               session: DictationSession,
-                               formattingContext: FormattingContext) async {
+                               session: DictationSession) async {
         guard let baseURL = URL(string: settings.cloudBaseURL) else {
             showError(OpenflowError.cloudAuthenticationRequired, sessionID: session.id)
             return
