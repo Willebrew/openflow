@@ -352,7 +352,7 @@ final class DictationCoordinator: ObservableObject {
         session?.focusedWindow = contextSnapshot.focusedWindow
         session?.targetProcessIdentifier = contextSnapshot.processIdentifier
         session?.targetCanInsertText = contextSnapshot.canInsertText
-        session?.textInputWasFocused = TextInputFocusProbe.isTextInputActive()
+        session?.textInputWasFocused = TextInputFocusProbe.isTextInputStrict()
         session?.selectedRange = contextSnapshot.selectedRange
         session?.metrics.activeApp = contextSnapshot.context.activeAppName
         session?.metrics.category = contextSnapshot.context.category
@@ -803,10 +803,12 @@ final class DictationCoordinator: ObservableObject {
 
     /// Dictation with no text field focused (at start or now) routes the
     /// spoken instruction to the Jev voice agent instead of inserting text.
+    /// Uses the strict probe: the loose hotkey probe treats browser/Electron
+    /// selection attributes as text input, which would misroute every window.
     private func shouldRunVoiceAgent(for session: DictationSession) -> Bool {
         guard settings.voiceAgentEnabled else { return false }
         if session.textInputWasFocused { return false }
-        if TextInputFocusProbe.isTextInputActive() { return false }
+        if TextInputFocusProbe.isTextInputStrict() { return false }
         return true
     }
 

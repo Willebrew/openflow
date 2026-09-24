@@ -94,4 +94,63 @@ enum TextInputFocusProbe {
         }
         return value as? String
     }
+
+    /// Stricter variant for routing a spoken command vs typed text. The loose
+    /// probe treats bare AXSelectedTextRange / AXEditable as sufficient because
+    /// a false positive only costs a swallowed hotkey; for routing, Chromium
+    /// and Electron apps expose those attributes on non-text elements, which
+    /// would mark every focused window as a text box.
+    static func isTextInputStrict() -> Bool {
+        if appKitTextInputActive() { return true }
+        guard AXIsProcessTrusted(),
+              let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            return false
+        }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(axApp, 0.08)
+        var focused: AnyObject?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focusedElement = focused,
+              CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
+            return false
+        }
+        return isStrictTextElement(focusedElement as! AXUIElement)
+    }
+
+    private static func isStrictTextElement(_ element: AXUIElement) -> Bool {
+        var role: AnyObject?
+        let roleString = (AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success
+            ? role as? String
+            : nil) ?? ""
+        let textRoles: Set<String> = [
+            kAXTextFieldRole as String,
+            kAXTextAreaRole as String,
+            kAXComboBoxRole as String,
+            "AXSearchField",
+            "AXSecureTextField",
+            "AXTextView"
+        ]
+        if textRoles.contains(roleString) { return true }
+        var subrole: AnyObject?
+        if AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole) == .success,
+           (subrole as? String) == (kAXSearchFieldSubrole as String) {
+            return true
+        }
+        if let marked = markedTextAttribute(in: element), !marked.isEmpty {
+            return true
+        }
+        // AXEditable only counts on roles web content reports it for;
+        // standalone AXSelectedTextRange is intentionally not a signal here.
+        let editableCapableRoles: Set<String> = [
+            "AXWebArea", "AXGroup", "AXScrollArea", "AXUnknown", "AXTextField", "AXTextArea"
+        ]
+        var editable: AnyObject?
+        if editableCapableRoles.contains(roleString),
+           AXUIElementCopyAttributeValue(element, "AXEditable" as CFString, &editable) == .success,
+           (editable as? Bool) == true {
+            return true
+        }
+        return false
+    }
 }
