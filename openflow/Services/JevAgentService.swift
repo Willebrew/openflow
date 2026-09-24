@@ -99,13 +99,14 @@ final class JevAgentService {
                 if !outcome.ok {
                     return aborted(outcome.detail, steps: step, model: model)
                 }
-                // App launches and activations take longer to land than clicks;
-                // give the frontmost app a beat before the next capture so the
-                // model sees the new window instead of the stale one.
-                let settle: Duration = (kind == "open_app" || kind == "open_url")
-                    ? .milliseconds(1500)
-                    : Self.settleDuration
-                try? await Task.sleep(for: settle)
+            }
+            // App launches and activations take longer to land than clicks;
+            // give the frontmost app a beat before the next capture so the
+            // model sees the new window instead of the stale one.
+            let settle: Duration = (kind == "open_app" || kind == "open_url")
+                ? .milliseconds(1500)
+                : Self.settleDuration
+            try? await Task.sleep(for: settle)
         }
         return aborted("Reached the \(Self.maxSteps)-step limit", steps: Self.maxSteps, model: model)
     }
