@@ -66,7 +66,7 @@ final class ScreenStateService {
         kAXPopUpButtonRole,
         kAXMenuButtonRole,
         kAXMenuItemRole,
-        kAXLinkRole,
+        "AXLink",
         kAXTextFieldRole,
         kAXTextAreaRole,
         kAXSliderRole,

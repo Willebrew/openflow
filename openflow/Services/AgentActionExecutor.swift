@@ -42,8 +42,8 @@ final class AgentActionExecutor {
             guard let element = element(elementID, in: state) else {
                 return Outcome(ok: false, detail: "element \(elementID) no longer exists")
             }
-            _ = AXUIElementSetAttribute(element.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-            if AXUIElementSetAttribute(element.element, kAXValueAttribute as CFString, text as CFString) == .success {
+            _ = AXUIElementSetAttributeValue(element.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            if AXUIElementSetAttributeValue(element.element, kAXValueAttribute as CFString, text as CFString) == .success {
                 return Outcome(ok: true, detail: "typed \(text.count) chars into \(element.serialized)")
             }
             return postText(text)
@@ -159,7 +159,7 @@ final class AgentActionExecutor {
             ($0.localizedName ?? "").lowercased() == needle ||
             ($0.bundleIdentifier ?? "").lowercased().contains(needle)
         }) {
-            running.activate(from: nil, options: [.activateAllWindows])
+            running.activate(options: [.activateAllWindows])
             return Outcome(ok: true, detail: "activated \(running.localizedName ?? name)")
         }
         let applications = URL(fileURLWithPath: "/Applications")
@@ -167,7 +167,7 @@ final class AgentActionExecutor {
            let match = urls.first(where: { $0.deletingPathExtension().lastPathComponent.lowercased() == needle }) {
             let config = NSWorkspace.OpenConfiguration()
             config.activates = true
-            NSWorkspace.shared.openApplication(at: match, configuration: config)
+            NSWorkspace.shared.openApplication(at: match, configuration: config) { _, _ in }
             return Outcome(ok: true, detail: "launched \(match.deletingPathExtension().lastPathComponent)")
         }
         return Outcome(ok: false, detail: "no app matching \(name)")
