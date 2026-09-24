@@ -26,6 +26,7 @@ final class DictationCoordinator: ObservableObject {
     private let insertionDiagnostics = InsertionDiagnosticsService()
     private let cloud = OpenFlowCloudService()
     private let cloudAuth = CloudAuthService()
+    private let agent = JevAgentService()
     private var sessionValidationInFlight = false
     private var lastMenuRevalidateAt: Date?
     private var sessionRefreshTimer: Timer?
@@ -130,6 +131,9 @@ final class DictationCoordinator: ObservableObject {
             guard let self else { return }
             NSApp.activate(ignoringOtherApps: true)
             SettingsWindowController.shared.show(coordinator: self, selectedTab: .settings)
+        }
+        agent.onProgress = { [weak self] status in
+            self?.pillViewModel.subtitle = status
         }
     }
 
@@ -348,6 +352,7 @@ final class DictationCoordinator: ObservableObject {
         session?.focusedWindow = contextSnapshot.focusedWindow
         session?.targetProcessIdentifier = contextSnapshot.processIdentifier
         session?.targetCanInsertText = contextSnapshot.canInsertText
+        session?.textInputWasFocused = TextInputFocusProbe.isTextInputActive()
         session?.selectedRange = contextSnapshot.selectedRange
         session?.metrics.activeApp = contextSnapshot.context.activeAppName
         session?.metrics.category = contextSnapshot.context.category
@@ -613,6 +618,13 @@ final class DictationCoordinator: ObservableObject {
                     latencyTrace("whisper \(ms(transcribed.requestTime)) model \(transcribed.model) provider \(transcribed.provider)")
                 }
 
+                if shouldRunVoiceAgent(for: activeSession) {
+                    await runVoiceAgent(instruction: transcribed.text,
+                                        session: activeSession,
+                                        formattingContext: formattingContext)
+                    return
+                }
+
                 let cleanupStarted = Date()
                 let cleaned: CleanupResult
                 let usedRemoteCleanup: Bool
@@ -786,6 +798,62 @@ final class DictationCoordinator: ObservableObject {
                                            transcript: transcribedResult,
                                            context: formattingContext)
             }
+        }
+    }
+
+    /// Dictation with no text field focused (at start or now) routes the
+    /// spoken instruction to the Jev voice agent instead of inserting text.
+    private func shouldRunVoiceAgent(for session: DictationSession) -> Bool {
+        guard settings.voiceAgentEnabled else { return false }
+        if session.textInputWasFocused { return false }
+        if TextInputFocusProbe.isTextInputActive() { return false }
+        return true
+    }
+
+    private func runVoiceAgent(instruction: String,
+                               session: DictationSession,
+                               formattingContext: FormattingContext) async {
+        guard let baseURL = URL(string: settings.cloudBaseURL) else {
+            showError(OpenflowError.cloudAuthenticationRequired, sessionID: session.id)
+            return
+        }
+        log("routing to voice agent: \(instruction)")
+        pillViewModel.subtitle = "Working"
+        let result = await agent.run(instruction: instruction,
+                                     settings: settings,
+                                     baseURL: baseURL)
+        var metrics = session.metrics
+        metrics.totalTime = Date().timeIntervalSince(session.startedAt)
+        metrics.insertionMethod = "voice-agent"
+        metrics.insertionVerified = result.completed
+        metrics.insertionAttempts = result.steps
+        metrics.insertionFailureReason = result.completed ? nil : result.summary
+        metrics.provider = result.provider
+        metrics.model = result.model
+        currentMetrics = metrics
+        history.add(DictationHistoryItem(timestamp: Date(),
+                                         finalText: instruction,
+                                         rawTranscript: instruction,
+                                         appName: formattingContext.activeAppName,
+                                         bundleID: formattingContext.bundleID,
+                                         category: formattingContext.category,
+                                         stylePreset: formattingContext.stylePreset,
+                                         insertionSucceeded: result.completed,
+                                         insertion: nil,
+                                         metrics: metrics),
+                    settings: settings)
+        log("voice agent finished: completed=\(result.completed), steps=\(result.steps), \(result.summary)")
+        _ = await refreshCloudStatsIfSignedIn()
+        guard processingSessionID == session.id else { return }
+        pillViewModel.state = result.completed ? .success : .error(result.summary)
+        pillViewModel.subtitle = result.completed ? "Done" : "Stopped"
+        revealPill()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.processingSessionID == session.id else { return }
+            self.processingSessionID = nil
+            self.resetPillToIdle()
+            self.pillViewModel.subtitle = "Ready"
+            self.applyPillVisibility()
         }
     }
 

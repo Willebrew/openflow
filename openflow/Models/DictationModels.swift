@@ -89,6 +89,7 @@ struct DictationSession {
     var focusedWindow: AXUIElement?
     var targetProcessIdentifier: pid_t?
     var targetCanInsertText: Bool = false
+    var textInputWasFocused: Bool = false
     var selectedRange: CFRange?
 }
 
