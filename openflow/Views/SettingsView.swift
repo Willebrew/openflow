@@ -877,6 +877,16 @@ struct SettingsView: View {
                 ForEach(coordinator.debugLog.prefix(8), id: \.self) { line in
                     Text(line).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
                 }
+                HStack {
+                    Text("Full diagnostics are written to openflow-debug.log continuously.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Open Log File") {
+                        DiagnosticsLog.shared.revealInFinder()
+                    }
+                    .buttonStyle(FlowSecondaryButtonStyle())
+                }
             }
 
             settingsCard("Insertion reports") {

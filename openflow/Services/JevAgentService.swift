@@ -35,10 +35,14 @@ final class JevAgentService {
         lastActionSignature = nil
         repeatCount = 0
         var model = "jev-latest"
+        DiagnosticsLog.shared.write("agent run start: \"\(instruction)\"")
         for step in 1...Self.maxSteps {
             guard let state = screen.capture() else {
+                DiagnosticsLog.shared.write("agent: abort, AX not trusted")
                 return aborted("Accessibility permission is off", steps: step - 1, model: model)
             }
+            DiagnosticsLog.shared.write(
+                "agent step \(step): frontmost=\(state.appName) elements=\(state.elements.count)")
             let answers: [String: AgentAnswer]
             do {
                 let response = try await cloud.agentStep(
@@ -54,8 +58,18 @@ final class JevAgentService {
                 }
                 answers = response.answers
             } catch {
+                DiagnosticsLog.shared.write("agent: step \(step) request failed: \(String(describing: error))")
                 return aborted(error.localizedDescription, steps: step - 1, model: model)
             }
+            DiagnosticsLog.shared.write(
+                "agent step \(step) answers: " +
+                "complete=\(answers["task_complete"]?.noul.map { String(format: "%.2f", $0) } ?? "-") " +
+                "action=\(answers["action"]?.choice ?? "-") " +
+                "conf=\(answers["action"]?.confidence.map { String(format: "%.2f", $0) } ?? "-") " +
+                "element=\(answers["element"]?.choice ?? "-") " +
+                "key=\(answers["key"]?.choice ?? "-") " +
+                "app=\(answers["app"]?.choice ?? "-") " +
+                "url=\(answers["url"]?.choice ?? "-")")
 
             if (answers["task_complete"]?.noul ?? 0) >= Self.completionThreshold {
                 return AgentRunResult(completed: true,
@@ -96,6 +110,8 @@ final class JevAgentService {
                 let outcome = perform(kind, answers: answers, state: state, instruction: instruction)
                 actionLog.append("step \(step): \(kind) -> \(outcome.detail)")
                 onProgress?("Step \(step): \(outcome.detail)")
+                DiagnosticsLog.shared.write(
+                    "agent step \(step) executed \(kind): \(outcome.detail) ok=\(outcome.ok)")
                 if !outcome.ok {
                     return aborted(outcome.detail, steps: step, model: model)
                 }

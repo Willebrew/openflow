@@ -352,7 +352,9 @@ final class DictationCoordinator: ObservableObject {
         session?.focusedWindow = contextSnapshot.focusedWindow
         session?.targetProcessIdentifier = contextSnapshot.processIdentifier
         session?.targetCanInsertText = contextSnapshot.canInsertText
-        session?.textInputWasFocused = TextInputFocusProbe.isTextInputStrict()
+        let focusDecision = TextInputFocusProbe.strictDecision()
+        session?.textInputWasFocused = focusDecision.isText
+        DiagnosticsLog.shared.write("focus probe at dictation start: \(focusDecision.report)")
         session?.selectedRange = contextSnapshot.selectedRange
         session?.metrics.activeApp = contextSnapshot.context.activeAppName
         session?.metrics.category = contextSnapshot.context.category
@@ -708,6 +710,8 @@ final class DictationCoordinator: ObservableObject {
                 activeSession.metrics.insertionFailureReason = insertionResult.failureReason
                 activeSession.metrics.totalTime = Date().timeIntervalSince(activeSession.startedAt)
                 if !succeeded {
+                    DiagnosticsLog.shared.write(
+                        "dictation failed for \(formattingContext.activeAppName) / \(formattingContext.category.rawValue): \(insertionResult.failureReason ?? "unknown")")
                     log("insertion failed for \(formattingContext.activeAppName) / \(formattingContext.category.rawValue): \(insertionResult.failureReason ?? "unknown")")
                     insertionDiagnostics.writeFailedInsertion(result: insertionResult,
                                                               category: formattingContext.category,
@@ -805,10 +809,19 @@ final class DictationCoordinator: ObservableObject {
     /// Uses the strict probe: the loose hotkey probe treats browser/Electron
     /// selection attributes as text input, which would misroute every window.
     private func shouldRunVoiceAgent(for session: DictationSession) -> Bool {
-        guard settings.voiceAgentEnabled else { return false }
-        if session.textInputWasFocused { return false }
-        if TextInputFocusProbe.isTextInputStrict() { return false }
-        return true
+        guard settings.voiceAgentEnabled else {
+            DiagnosticsLog.shared.write("routing: dictate (voice agent toggle off)")
+            return false
+        }
+        if session.textInputWasFocused {
+            DiagnosticsLog.shared.write("routing: dictate (text input at start)")
+            return false
+        }
+        let decision = TextInputFocusProbe.strictDecision()
+        DiagnosticsLog.shared.write(
+            "routing: \(decision.isText ? "dictate" : "voice-agent") " +
+            "(probe at end: \(decision.report))")
+        return !decision.isText
     }
 
     private func runVoiceAgent(instruction: String,
@@ -817,6 +830,7 @@ final class DictationCoordinator: ObservableObject {
             showError(OpenflowError.cloudAuthenticationRequired, sessionID: session.id)
             return
         }
+        DiagnosticsLog.shared.write("routing to voice agent: \(instruction)")
         log("routing to voice agent: \(instruction)")
         pillViewModel.subtitle = "Working"
         let result = await agent.run(instruction: instruction,
@@ -834,6 +848,8 @@ final class DictationCoordinator: ObservableObject {
         // Voice-agent runs are not dictation: they never inserted text into a
         // field, so they must not appear in the transcription history.
         log("voice agent finished: completed=\(result.completed), steps=\(result.steps), \(result.summary)")
+        DiagnosticsLog.shared.write(
+            "voice agent finished: completed=\(result.completed) steps=\(result.steps) \(result.summary)")
         _ = await refreshCloudStatsIfSignedIn()
         guard processingSessionID == session.id else { return }
         pillViewModel.state = result.completed ? .success : .error(result.summary)
@@ -977,6 +993,7 @@ final class DictationCoordinator: ObservableObject {
 
     private func showError(_ error: Error, sessionID: UUID? = nil) {
         log("error: \(error.localizedDescription)")
+        DiagnosticsLog.shared.write("error shown: \(String(describing: error))")
         cancelRecordingLimit()
         pillViewModel.state = .error(error.localizedDescription)
         pillViewModel.subtitle = error.localizedDescription
@@ -1153,6 +1170,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func log(_ message: String) {
+        DiagnosticsLog.shared.write(message)
         guard settings.debugLogsEnabled else { return }
         let line = "\(Date().formatted(date: .omitted, time: .standard))  \(message)"
         debugLog.insert(line, at: 0)
