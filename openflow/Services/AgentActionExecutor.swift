@@ -31,6 +31,7 @@ final class AgentActionExecutor {
             guard let element = element(elementID, in: state) else {
                 return Outcome(ok: false, detail: "element \(elementID) no longer exists")
             }
+            AXUIElementSetMessagingTimeout(element.element, 0.1)
             if AXUIElementPerformAction(element.element, kAXPressAction as CFString) == .success {
                 return Outcome(ok: true, detail: "pressed \(element.serialized)")
             }
@@ -43,6 +44,7 @@ final class AgentActionExecutor {
             guard let element = element(elementID, in: state) else {
                 return Outcome(ok: false, detail: "element \(elementID) no longer exists")
             }
+            AXUIElementSetMessagingTimeout(element.element, 0.1)
             _ = AXUIElementSetAttributeValue(element.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             if AXUIElementSetAttributeValue(element.element, kAXValueAttribute as CFString, text as CFString) == .success {
                 return Outcome(ok: true, detail: "typed \(text.count) chars into \(element.serialized)")

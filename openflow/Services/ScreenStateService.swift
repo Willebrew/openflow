@@ -91,6 +91,9 @@ final class ScreenStateService {
         guard let app else { return nil }
 
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        // Without this, every attribute read below can block the main run loop
+        // for the ~6s AX default when the target app is slow or hung.
+        AXUIElementSetMessagingTimeout(axApp, 0.15)
         var elements: [AgentElement] = []
         var visited = 0
 
@@ -122,6 +125,8 @@ final class ScreenStateService {
     private func walk(element: AXUIElement, depth: Int, visited: inout Int, into elements: inout [AgentElement]) {
         guard depth <= maxDepth, visited < maxVisited, elements.count < maxElements else { return }
         visited += 1
+        // Messaging timeouts are per-element, not inherited from axApp.
+        AXUIElementSetMessagingTimeout(element, 0.1)
 
         let role = stringAttribute(element, kAXRoleAttribute) ?? ""
         if actionableRoles.contains(role) {

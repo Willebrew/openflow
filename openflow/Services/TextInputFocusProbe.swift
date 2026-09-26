@@ -49,6 +49,9 @@ enum TextInputFocusProbe {
               CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
             return false
         }
+        // Messaging timeouts are per-element; the attribute reads below would
+        // otherwise stall ~6s each when the frontmost app is slow to answer.
+        AXUIElementSetMessagingTimeout(focusedElement as! AXUIElement, 0.08)
         return isTextInputElement(focusedElement as! AXUIElement)
     }
 
@@ -136,6 +139,7 @@ enum TextInputFocusProbe {
             signals.append("focusedElement=\(focusResult.rawValue)")
             return (false, "strict=no-text " + signals.joined(separator: " "))
         }
+        AXUIElementSetMessagingTimeout(focusedElement as! AXUIElement, 0.08)
         return strictElementDecision(focusedElement as! AXUIElement, signals: signals)
     }
 
