@@ -49,6 +49,9 @@ enum TextInputFocusProbe {
               CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
             return false
         }
+        // Messaging timeouts are per-element; the attribute reads below would
+        // otherwise stall ~6s each when the frontmost app is slow to answer.
+        AXUIElementSetMessagingTimeout(focusedElement as! AXUIElement, 0.08)
         return isTextInputElement(focusedElement as! AXUIElement)
     }
 
@@ -93,5 +96,101 @@ enum TextInputFocusProbe {
             return nil
         }
         return value as? String
+    }
+
+    /// Stricter variant for routing a spoken command vs typed text. The loose
+    /// probe treats bare AXSelectedTextRange / AXEditable as sufficient because
+    /// a false positive only costs a swallowed hotkey; for routing, Chromium
+    /// and Electron apps expose those attributes on non-text elements, which
+    /// would mark every focused window as a text box.
+    static func isTextInputStrict() -> Bool {
+        strictDecision().isText
+    }
+
+    /// Strict routing verdict plus a one-line dump of every signal that fed
+    /// it, so field logs show exactly why a focus was (not) treated as text.
+    static func strictDecision() -> (isText: Bool, report: String) {
+        var signals: [String] = []
+        if appKitTextInputActive() {
+            return (true, "strict=text appKitField=1")
+        }
+        signals.append("appKit=0")
+        guard AXIsProcessTrusted() else {
+            signals.append("axTrusted=0")
+            return (false, "strict=no-text " + signals.joined(separator: " "))
+        }
+        signals.append("axTrusted=1")
+        guard let app = NSWorkspace.shared.frontmostApplication else {
+            signals.append("frontmost=none")
+            return (false, "strict=no-text " + signals.joined(separator: " "))
+        }
+        signals.append("app=\(app.localizedName ?? "?")")
+        guard app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            signals.append("selfApp=1")
+            return (false, "strict=no-text " + signals.joined(separator: " "))
+        }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(axApp, 0.08)
+        var focused: AnyObject?
+        let focusResult = AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused)
+        guard focusResult == .success,
+              let focusedElement = focused,
+              CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
+            signals.append("focusedElement=\(focusResult.rawValue)")
+            return (false, "strict=no-text " + signals.joined(separator: " "))
+        }
+        AXUIElementSetMessagingTimeout(focusedElement as! AXUIElement, 0.08)
+        return strictElementDecision(focusedElement as! AXUIElement, signals: signals)
+    }
+
+    private static func strictElementDecision(_ element: AXUIElement,
+                                              signals: [String]) -> (isText: Bool, report: String) {
+        var signals = signals
+        var role: AnyObject?
+        let roleString = (AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success
+            ? role as? String
+            : nil) ?? ""
+        signals.append("role=\(roleString.isEmpty ? "?" : roleString)")
+        let textRoles: Set<String> = [
+            kAXTextFieldRole as String,
+            kAXTextAreaRole as String,
+            kAXComboBoxRole as String,
+            "AXSearchField",
+            "AXSecureTextField",
+            "AXTextView"
+        ]
+        if textRoles.contains(roleString) {
+            return (true, "strict=text " + signals.joined(separator: " "))
+        }
+        var subrole: AnyObject?
+        let subroleString = (AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole) == .success
+            ? subrole as? String
+            : nil) ?? ""
+        signals.append("subrole=\(subroleString.isEmpty ? "-" : subroleString)")
+        if subroleString == (kAXSearchFieldSubrole as String) {
+            return (true, "strict=text " + signals.joined(separator: " "))
+        }
+        let marked = markedTextAttribute(in: element)
+        signals.append("marked=\((marked?.isEmpty == false) ? 1 : 0)")
+        if let marked, !marked.isEmpty {
+            return (true, "strict=text " + signals.joined(separator: " "))
+        }
+        var selectedRange: AnyObject?
+        let hasSelectedRange = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRange) == .success
+            && selectedRange != nil
+        signals.append("selRange=\(hasSelectedRange ? 1 : 0)")
+        var editable: AnyObject?
+        let editableFlag = AXUIElementCopyAttributeValue(element, "AXEditable" as CFString, &editable) == .success
+            && (editable as? Bool) == true
+        signals.append("editable=\(editableFlag ? 1 : 0)")
+        // AXEditable only counts on roles web content reports it for;
+        // standalone AXSelectedTextRange is intentionally not a signal here.
+        let editableCapableRoles: Set<String> = [
+            "AXWebArea", "AXGroup", "AXScrollArea", "AXUnknown", "AXTextField", "AXTextArea"
+        ]
+        if editableFlag, editableCapableRoles.contains(roleString) {
+            return (true, "strict=text " + signals.joined(separator: " "))
+        }
+        return (false, "strict=no-text " + signals.joined(separator: " "))
     }
 }
