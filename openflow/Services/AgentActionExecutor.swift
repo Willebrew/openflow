@@ -304,8 +304,11 @@ final class AgentActionExecutor {
         if let match = running.first(where: {
             ($0.localizedName ?? "").caseInsensitiveCompare(needle) == .orderedSame
         }) ?? running.first(where: {
-            ($0.localizedName ?? "").lowercased().contains(needle) ||
-            ($0.bundleIdentifier ?? "").lowercased().contains(needle)
+            // Substring matching is only safe on 4+ chars - ASR fragments like
+            // "our" would otherwise match apps like Sourcetree.
+            needle.count >= 4 &&
+            (($0.localizedName ?? "").lowercased().contains(needle) ||
+             ($0.bundleIdentifier ?? "").lowercased().contains(needle))
         }) {
             match.activate(options: [.activateAllWindows])
             return Outcome(ok: true, detail: "activated \(match.localizedName ?? name)")
@@ -325,6 +328,7 @@ final class AgentActionExecutor {
             guard let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
             if let match = urls.first(where: {
                 $0.pathExtension == "app" &&
+                needle.count >= 4 &&
                 $0.deletingPathExtension().lastPathComponent.lowercased().contains(needle)
             }) {
                 launch(at: match)

@@ -54,9 +54,12 @@ extension AgentElement {
 /// Screen Recording access is needed because we never look at pixels.
 @MainActor
 final class ScreenStateService {
-    private let maxDepth = 8
-    private let maxVisited = 400
-    private let maxElements = 60
+    private let maxDepth = 14
+    private let maxVisited = 1200
+    private let maxElements = 80
+    /// Below this count the app almost certainly withheld its AX tree
+    /// (Chromium/Electron before AXEnhancedUserInterface is set).
+    private let minUsefulElements = 6
 
     /// Roles that carry a concrete action worth offering to the model.
     private let actionableRoles: Set<String> = [
@@ -80,7 +83,7 @@ final class ScreenStateService {
         "AXSwitch"
     ]
 
-    func capture(frontmostPID: pid_t? = nil) -> AgentScreenState? {
+    func capture(frontmostPID: pid_t? = nil) async -> AgentScreenState? {
         guard AXIsProcessTrusted() else { return nil }
         let app: NSRunningApplication?
         if let frontmostPID {
@@ -94,21 +97,21 @@ final class ScreenStateService {
         // Without this, every attribute read below can block the main run loop
         // for the ~6s AX default when the target app is slow or hung.
         AXUIElementSetMessagingTimeout(axApp, 0.15)
-        var elements: [AgentElement] = []
-        var visited = 0
+        // Chromium/Electron apps only populate their web AX tree once an
+        // assistive client opts in; without these the walk finds ~3 elements
+        // and the decision model has nothing to act on.
+        AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
 
         var windowTitle = ""
-        var focusedWindow: AnyObject?
-        if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
-           let window = focusedWindow {
-            windowTitle = stringAttribute(window as! AXUIElement, kAXTitleAttribute) ?? ""
-            walk(element: window as! AXUIElement, depth: 0, visited: &visited, into: &elements)
-        }
-        // Menu bar is a separate tree from windows and holds status items/menus.
-        var menuBar: AnyObject?
-        if AXUIElementCopyAttributeValue(axApp, kAXMenuBarAttribute as CFString, &menuBar) == .success,
-           let bar = menuBar {
-            walk(element: bar as! AXUIElement, depth: 0, visited: &visited, into: &elements)
+        var elements = collectElements(axApp: axApp, windowTitle: &windowTitle)
+        if elements.count < minUsefulElements {
+            // The hints above populate the tree asynchronously; one retry
+            // after a short delay usually turns an empty walk into a full one.
+            try? await Task.sleep(for: .milliseconds(400))
+            elements = collectElements(axApp: axApp, windowTitle: &windowTitle)
+            DiagnosticsLog.shared.write(
+                "agent capture: sparse tree for \(app.localizedName ?? "?"), retry saw \(elements.count) elements")
         }
 
         let running = NSWorkspace.shared.runningApplications
@@ -120,6 +123,41 @@ final class ScreenStateService {
                                 windowTitle: windowTitle,
                                 elements: deduped(elements),
                                 runningApps: running)
+    }
+
+    /// One walk over the app's windows plus its menu bar. Electron apps often
+    /// report no focused window, so the plain window list is the fallback root.
+    private func collectElements(axApp: AXUIElement, windowTitle: inout String) -> [AgentElement] {
+        var elements: [AgentElement] = []
+        var visited = 0
+        var windows: [AXUIElement] = []
+        var focusedWindow: AnyObject?
+        if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
+           let focused = focusedWindow,
+           CFGetTypeID(focused) == AXUIElementGetTypeID() {
+            let window = focused as! AXUIElement
+            windows.append(window)
+            windowTitle = stringAttribute(window, kAXTitleAttribute) ?? ""
+        } else {
+            var windowList: AnyObject?
+            if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
+               let list = windowList as? [AXUIElement] {
+                windows.append(contentsOf: list.prefix(2))
+                if let first = list.first {
+                    windowTitle = stringAttribute(first, kAXTitleAttribute) ?? ""
+                }
+            }
+        }
+        for window in windows {
+            walk(element: window, depth: 0, visited: &visited, into: &elements)
+        }
+        // Menu bar is a separate tree from windows and holds status items/menus.
+        var menuBar: AnyObject?
+        if AXUIElementCopyAttributeValue(axApp, kAXMenuBarAttribute as CFString, &menuBar) == .success,
+           let bar = menuBar {
+            walk(element: bar as! AXUIElement, depth: 0, visited: &visited, into: &elements)
+        }
+        return elements
     }
 
     private func walk(element: AXUIElement, depth: Int, visited: inout Int, into elements: inout [AgentElement]) {

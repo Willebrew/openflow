@@ -37,13 +37,14 @@ final class JevAgentService {
         var model = "jev-latest"
         DiagnosticsLog.shared.write("agent run start: \"\(instruction)\"")
         for step in 1...Self.maxSteps {
-            guard let state = screen.capture() else {
+            guard let state = await screen.capture() else {
                 DiagnosticsLog.shared.write("agent: abort, AX not trusted")
                 return aborted("Accessibility permission is off", steps: step - 1, model: model)
             }
             DiagnosticsLog.shared.write(
                 "agent step \(step): frontmost=\(state.appName) elements=\(state.elements.count)")
-            let answers: [String: AgentAnswer]
+            DiagnosticsLog.shared.write("agent step \(step) state:\n\(state.serialized())")
+            var answers: [String: AgentAnswer]
             do {
                 let response = try await cloud.agentStep(
                     state: statePayload(instruction: instruction, step: step, screen: state),
@@ -79,13 +80,29 @@ final class JevAgentService {
             }
 
             guard let actionChoice = answers["action"],
-                  let kind = actionChoice.choice else {
+                  let rawKind = actionChoice.choice else {
                 return aborted("No action chosen", steps: step - 1, model: model)
             }
-            if let confidence = actionChoice.confidence, confidence < Self.confidenceFloor {
-                return aborted("Jev not confident enough to act (\(Int(confidence * 100))%)",
-                               steps: step - 1,
-                               model: model)
+            var kind = rawKind
+            // Opening the app or URL named in the goal is cheap and reversible,
+            // so a hedged abort should not kill the run when we can resolve a
+            // target ourselves.
+            if kind == "abort",
+               let rescued = rescueAction(instruction: instruction, answers: &answers, state: state) {
+                DiagnosticsLog.shared.write("agent step \(step): abort overridden -> \(rescued)")
+                kind = rescued
+            }
+            if kind != "open_app", kind != "open_url",
+               let confidence = actionChoice.confidence, confidence < Self.confidenceFloor {
+                if let rescued = rescueAction(instruction: instruction, answers: &answers, state: state) {
+                    DiagnosticsLog.shared.write(
+                        "agent step \(step): low-confidence \(kind) overridden -> \(rescued)")
+                    kind = rescued
+                } else {
+                    return aborted("Jev not confident enough to act (\(Int(confidence * 100))%)",
+                                   steps: step - 1,
+                                   model: model)
+                }
             }
 
             switch kind {
@@ -231,6 +248,37 @@ final class JevAgentService {
               choice != "none",
               let id = Int(choice) else { return nil }
         return state.elements.first { $0.id == id }
+    }
+
+    /// When the model hedges (abort, or confidence under the floor) we still
+    /// take the cheap, reversible step ourselves when the goal names a URL or
+    /// an app, or when the model already picked a concrete element/text
+    /// target. Returns nil when nothing safe can be recovered.
+    private func rescueAction(instruction: String,
+                              answers: inout [String: AgentAnswer],
+                              state: AgentScreenState) -> String? {
+        if let url = Self.urlCandidates(in: instruction).first {
+            if answers["url"]?.choice == nil || answers["url"]?.choice == "none" {
+                answers["url"] = AgentAnswer(type: nil, choice: url, score: nil,
+                                             noul: nil, confidence: nil, probabilities: nil)
+            }
+            return "open_url"
+        }
+        if answers["app"]?.choice == nil || answers["app"]?.choice == "none",
+           let mentioned = Self.appNameMentioned(in: instruction) {
+            answers["app"] = AgentAnswer(type: nil, choice: mentioned, score: nil,
+                                         noul: nil, confidence: nil, probabilities: nil)
+        }
+        if answers["app"]?.choice.flatMap({ $0 == "none" ? nil : $0 }) != nil {
+            return "open_app"
+        }
+        if chosenElement(from: answers, state: state) != nil {
+            if let text = answers["text"]?.choice, !text.isEmpty {
+                return "type"
+            }
+            return "click"
+        }
+        return nil
     }
 
     // MARK: - State + questions

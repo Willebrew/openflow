@@ -270,12 +270,19 @@ final class TextInsertionService {
             let candidatePrepared = spacingAdjusted(text, focused: focused)
             let before = stringValue(in: focused)
             if tryAXInsertion(candidatePrepared, element: focused) {
-                let verified = verifyInsertion(candidatePrepared, element: focused, previousValue: before)
-                if verified {
+                switch verifyInsertion(candidatePrepared, element: focused, previousValue: before) {
+                case .verified:
                     if mayPressEnter { sendEnter() }
                     return result(method: .focusedAX, verified: true, attempts: attempts, target: target)
+                case .unreadable:
+                    // The AX write succeeded but the element cannot be read
+                    // back. Continuing to other candidates or key-event
+                    // fallback would duplicate the text if the write landed.
+                    if mayPressEnter { sendEnter() }
+                    return result(method: .focusedAX, verified: false, attempts: attempts, target: target)
+                case .unverified:
+                    failures.append("focused AX reported success but the text did not land")
                 }
-                failures.append("focused AX reported success but could not be verified")
             } else {
                 failures.append("focused AX insertion failed")
             }
@@ -293,12 +300,16 @@ final class TextInsertionService {
             let before = stringValue(in: candidate)
             attempts += 1
             if tryAXInsertion(candidatePrepared, element: candidate) {
-                let verified = verifyInsertion(candidatePrepared, element: candidate, previousValue: before)
-                if verified {
+                switch verifyInsertion(candidatePrepared, element: candidate, previousValue: before) {
+                case .verified:
                     if mayPressEnter { sendEnter() }
                     return result(method: .descendantAX, verified: true, attempts: attempts, target: target)
+                case .unreadable:
+                    if mayPressEnter { sendEnter() }
+                    return result(method: .descendantAX, verified: false, attempts: attempts, target: target)
+                case .unverified:
+                    failures.append("descendant AX reported success but the text did not land")
                 }
-                failures.append("descendant AX reported success but could not be verified")
             }
         }
         failures.append("editable descendant AX scan found no writable target")
@@ -380,10 +391,15 @@ final class TextInsertionService {
         if !isBrowserApp() {
             let before = stringValue(in: element)
             if tryAXInsertion(prepared, element: element) {
-                let verified = verifyInsertion(prepared, element: element, previousValue: before)
-                if verified {
+                switch verifyInsertion(prepared, element: element, previousValue: before) {
+                case .verified:
                     if pressEnter, submitConfirmationReason == nil { sendEnter() }
                     return result(method: .capturedAX, verified: true, attempts: 1, target: target)
+                case .unreadable:
+                    if pressEnter, submitConfirmationReason == nil { sendEnter() }
+                    return result(method: .capturedAX, verified: false, attempts: 1, target: target)
+                case .unverified:
+                    break
                 }
             }
         }
@@ -422,15 +438,41 @@ final class TextInsertionService {
         return (app?.localizedName ?? "Unknown", app?.bundleIdentifier)
     }
 
+    private enum InsertionVerification {
+        case verified
+        /// Read the value back and the inserted text is not there.
+        case unverified
+        /// The element exposes no readable value at all (common on
+        /// Chromium/Electron before AXEnhancedUserInterface lands). Not proof
+        /// of failure - and retyping would duplicate the text if the write
+        /// actually landed.
+        case unreadable
+    }
+
     private func verifyInsertion(_ insertedText: String,
                                  element: AXUIElement,
-                                 previousValue: String?) -> Bool {
-        guard let after = stringValue(in: element) else { return false }
+                                 previousValue: String?) -> InsertionVerification {
+        guard let after = stringValue(in: element) else { return .unreadable }
+        let needle = insertedText.trimmingCharacters(in: .whitespacesAndNewlines)
         if let previousValue, previousValue != after {
-            let normalizedInserted = insertedText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return normalizedInserted.isEmpty || after.contains(normalizedInserted) || after.count > previousValue.count
+            return needle.isEmpty || after.contains(needle) || after.count > previousValue.count
+                ? .verified
+                : .unverified
         }
-        return after.contains(insertedText.trimmingCharacters(in: .whitespacesAndNewlines))
+        return after.contains(needle) ? .verified : .unverified
+    }
+
+    /// App-level AX element with a bounded messaging timeout and the two
+    /// hints Chromium/Electron apps need before they expose their web AX
+    /// tree. Without the timeout, reads on a slow app stall the main thread
+    /// for seconds; without the hints, AXValue/AXSelectedTextRange reads
+    /// come back empty so insertion verification can never see the text.
+    private func appElement(forProcessID pid: pid_t) -> AXUIElement {
+        let axApp = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(axApp, 0.15)
+        AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        return axApp
     }
 
     private func restoreTargetApplication(processIdentifier: pid_t?) async {
@@ -444,12 +486,14 @@ final class TextInsertionService {
     private func focusedElement() -> AXUIElement? {
         guard AXIsProcessTrusted(),
               let app = NSWorkspace.shared.frontmostApplication else { return nil }
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        let axApp = appElement(forProcessID: app.processIdentifier)
         var focused: AnyObject?
         guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focusedElement = focused,
               CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else { return nil }
-        return (focusedElement as! AXUIElement)
+        let element = focusedElement as! AXUIElement
+        AXUIElementSetMessagingTimeout(element, 0.08)
+        return element
     }
 
     private func insertionCandidates(focused: AXUIElement?) -> [AXUIElement] {
@@ -458,7 +502,7 @@ final class TextInsertionService {
             return focused.map { [$0] } ?? []
         }
 
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        let axApp = appElement(forProcessID: app.processIdentifier)
         var roots: [AXUIElement] = []
         if let focused { roots.append(focused) }
 
@@ -492,6 +536,7 @@ final class TextInsertionService {
         while !queue.isEmpty, visited < 220 {
             let element = queue.removeFirst()
             visited += 1
+            AXUIElementSetMessagingTimeout(element, 0.08)
 
             if isEditableElement(element) {
                 matches.append(element)
@@ -552,14 +597,15 @@ final class TextInsertionService {
         guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier?.lowercased() else {
             return false
         }
-        return [
-            "company.thebrowser.browser",
-            "com.google.chrome",
-            "com.apple.safari",
-            "com.brave.browser",
-            "com.microsoft.edgemac",
-            "org.mozilla.firefox"
-        ].contains(bundleID)
+        // company.thebrowser.* covers both Arc and Dia.
+        return bundleID.hasPrefix("company.thebrowser")
+            || [
+                "com.google.chrome",
+                "com.apple.safari",
+                "com.brave.browser",
+                "com.microsoft.edgemac",
+                "org.mozilla.firefox"
+            ].contains(bundleID)
     }
 
     private func isCodexApp() -> Bool {
@@ -725,7 +771,7 @@ final class TextInsertionService {
         guard let processIdentifier,
               AXIsProcessTrusted() else { return }
 
-        let axApp = AXUIElementCreateApplication(processIdentifier)
+        let axApp = appElement(forProcessID: processIdentifier)
         _ = AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, true as CFTypeRef)
 
         var windowValue: AnyObject?
@@ -798,7 +844,7 @@ final class TextInsertionService {
         var roots: [AXUIElement] = []
         if let focused { roots.append(focused) }
         if let processIdentifier {
-            let axApp = AXUIElementCreateApplication(processIdentifier)
+            let axApp = appElement(forProcessID: processIdentifier)
             var focusedWindow: AnyObject?
             if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
                let focusedWindow,
@@ -826,6 +872,7 @@ final class TextInsertionService {
         while !queue.isEmpty, visited < 260, values.joined(separator: "\n").count < 10_000 {
             let element = queue.removeFirst()
             visited += 1
+            AXUIElementSetMessagingTimeout(element, 0.08)
             let id = AXUIElementID(element)
             guard !seen.contains(id) else { continue }
             seen.insert(id)
