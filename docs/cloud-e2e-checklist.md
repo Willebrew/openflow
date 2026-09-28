@@ -30,6 +30,10 @@ client-side only.
 11. With a live session, force a backend 401 (for example a stale deploy or
     proxy). The Mac must stay signed in and show “Couldn’t connect to openflow
     right now. Please try again.” rather than deleting the token.
+12. With a signed-in session, dictate a command with no text field focused
+    (for example “open Notes”). The run routes to the voice agent, the pill
+    shows “Working” plus per-step progress, and no transcription history
+    entry is written.
 
 ## Evidence To Keep
 
