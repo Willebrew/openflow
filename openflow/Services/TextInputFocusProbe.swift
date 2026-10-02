@@ -43,6 +43,11 @@ enum TextInputFocusProbe {
         }
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(axApp, 0.08)
+        // Chromium/Electron only populate their web AX tree once an assistive
+        // client opts in; without these the focused-element read comes back
+        // empty and a focused field looks like no text input.
+        AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         var focused: AnyObject?
         guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focusedElement = focused,
@@ -131,8 +136,19 @@ enum TextInputFocusProbe {
         }
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(axApp, 0.08)
+        AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         var focused: AnyObject?
-        let focusResult = AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused)
+        var focusResult = AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused)
+        // The hints above populate the tree asynchronously (~2s observed on
+        // a cold Chromium launch); poll briefly before deciding there is no
+        // text input so dictation is not misrouted to the agent.
+        var populateRetries = 0
+        while focusResult != .success && populateRetries < 10 {
+            Thread.sleep(forTimeInterval: 0.25)
+            focusResult = AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focused)
+            populateRetries += 1
+        }
         guard focusResult == .success,
               let focusedElement = focused,
               CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
