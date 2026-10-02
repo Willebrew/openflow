@@ -54,7 +54,10 @@ extension AgentElement {
 /// Screen Recording access is needed because we never look at pixels.
 @MainActor
 final class ScreenStateService {
-    private let maxDepth = 14
+    /// Electron apps nest their AXWebArea under ~7 levels of chrome AXGroups
+    /// and their DOM runs deep; 14 truncated the walk before any real content
+    /// on VS Code. maxVisited/maxElements bound the cost of the deeper cap.
+    private let maxDepth = 22
     private let maxVisited = 1200
     private let maxElements = 80
     /// Below this count the app almost certainly withheld its AX tree
