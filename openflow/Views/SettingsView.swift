@@ -810,6 +810,8 @@ struct SettingsView: View {
                 permissionDivider
                 settingsToggleRow("Spoken press enter", "When on, a trailing press enter, hit enter, or press return sends Return and those words are removed. When off, the words stay in the document.", isOn: $coordinator.settings.pressEnterCommandEnabled)
                 permissionDivider
+                settingsToggleRow("Voice agent", "Dictate outside a text field and openflow asks Jev to act on your Mac instead of typing.", isOn: $coordinator.settings.voiceAgentEnabled)
+                permissionDivider
                 settingsToggleRow("Hide inactive pill", "Only show the floating UI while recording, processing, or reporting a result.", isOn: $coordinator.settings.hideInactivePill)
                     .onChange(of: coordinator.settings.hideInactivePill) { _, _ in
                         coordinator.refreshPillVisibility()
@@ -874,6 +876,16 @@ struct SettingsView: View {
                 }
                 ForEach(coordinator.debugLog.prefix(8), id: \.self) { line in
                     Text(line).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Full diagnostics are written to openflow-debug.log continuously.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Open Log File") {
+                        DiagnosticsLog.shared.revealInFinder()
+                    }
+                    .buttonStyle(FlowSecondaryButtonStyle())
                 }
             }
 

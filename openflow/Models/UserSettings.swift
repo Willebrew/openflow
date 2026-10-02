@@ -226,6 +226,9 @@ final class UserSettings: ObservableObject {
     @Published var pressEnterCommandEnabled: Bool {
         didSet { defaults.set(pressEnterCommandEnabled, forKey: Keys.pressEnterCommandEnabled) }
     }
+    @Published var voiceAgentEnabled: Bool {
+        didSet { defaults.set(voiceAgentEnabled, forKey: Keys.voiceAgentEnabled) }
+    }
     @Published var hideInactivePill: Bool {
         didSet { defaults.set(hideInactivePill, forKey: Keys.hideInactivePill) }
     }
@@ -286,6 +289,7 @@ final class UserSettings: ObservableObject {
         contextAwarenessEnabled = defaults.object(forKey: Keys.contextAwarenessEnabled) as? Bool ?? true
         browserURLDetectionEnabled = defaults.object(forKey: Keys.browserURLDetectionEnabled) as? Bool ?? true
         pressEnterCommandEnabled = defaults.object(forKey: Keys.pressEnterCommandEnabled) as? Bool ?? true
+        voiceAgentEnabled = defaults.object(forKey: Keys.voiceAgentEnabled) as? Bool ?? true
         hideInactivePill = defaults.object(forKey: Keys.hideInactivePill) as? Bool ?? false
         debugLogsEnabled = defaults.object(forKey: Keys.debugLogsEnabled) as? Bool ?? false
         showTechnicalInsertionDetails = defaults.object(forKey: Keys.showTechnicalInsertionDetails) as? Bool ?? false
@@ -531,6 +535,7 @@ final class UserSettings: ObservableObject {
         static let contextAwarenessEnabled = "contextAwarenessEnabled"
         static let browserURLDetectionEnabled = "browserURLDetectionEnabled"
         static let pressEnterCommandEnabled = "pressEnterCommandEnabled"
+        static let voiceAgentEnabled = "voiceAgentEnabled"
         static let hideInactivePill = "hideInactivePill"
         static let debugLogsEnabled = "debugLogsEnabled"
         static let showTechnicalInsertionDetails = "showTechnicalInsertionDetails"

@@ -48,7 +48,9 @@ if rg -F "Version 0.1" openflow; then
   fail "settings still hardcodes Version 0.1"
 fi
 
-if rg -n "operatorMode|\\.agent|case agent|isOperatorActive|MacActionService|agentPrompt|agentStatus|agentIsRunning|agentService" openflow/App openflow/Models openflow/Services openflow/Views; then
+# The removed operator runtime stays banned; the Jev voice agent
+# (JevAgentService + cloud.agentStep) is the sanctioned replacement.
+if rg -n "operatorMode|case agent|isOperatorActive|MacActionService|agentPrompt|agentStatus|agentIsRunning" openflow/App openflow/Models openflow/Services openflow/Views; then
   fail "Operator runtime route is present"
 fi
 
