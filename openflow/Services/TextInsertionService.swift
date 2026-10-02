@@ -656,8 +656,15 @@ final class TextInsertionService {
 
     private func tryAXInsertion(_ text: String, element: AXUIElement) -> Bool {
         if selectedRange(in: element) != nil {
+            // Some fields (SwiftUI search fields e.g. Maps) answer .success on
+            // AXSelectedText writes they drop entirely, so only trust the
+            // write when the readable value changed. Elements whose value
+            // cannot be read at all keep the benefit of the doubt - a retry
+            // there could double-type text that did land.
+            let before = stringValue(in: element)
             let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
-            if result == .success { return true }
+            if result == .success,
+               before == nil || stringValue(in: element) != before { return true }
         }
         return replaceAXValue(text, element: element)
     }
