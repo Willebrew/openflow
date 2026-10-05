@@ -42,6 +42,17 @@ one-line signal dump (`strict=no-text appKit=0 axTrusted=1 app=Arc
 role=AXWebArea ...`) so the log shows exactly why routing decided what it
 did.
 
+The same opt-in applies on the probe side: the strict probe and the loose
+hotkey probe both set `AXEnhancedUserInterface` and
+`AXManualAccessibility` on the application element, matching
+`ScreenStateService.capture()` and the `ContextService` context snapshot.
+Chromium and Electron apps only populate their web AX tree once an
+assistive client asks, and the tree arrives asynchronously (~2 s on a
+cold Chromium launch), so `strictDecision()` retries the focused-element
+read every 250 ms for up to ~2.5 s before reporting `no-text`. Without
+the poll a focused web field reads as empty and dictation inside it would
+be misrouted to the agent.
+
 ## The step loop
 
 `JevAgentService.run(instruction:settings:baseURL:)` runs at most
@@ -105,10 +116,11 @@ Screen Recording grant -- only the AX tree is read, never pixels.
   a hung app cannot stall the main thread for the ~6 s AX default.
 - Walks the focused window -- or the first two windows when none is focused
   (common on Electron) -- plus the menu bar, which is a separate tree.
-- Budget: depth <= 14, <= 1200 nodes visited, <= 80 elements collected,
-  deduplicated on `role|title|center x|center y`; `serialized()` sends at
-  most 60 lines to the model and summarizes the rest as
-  `... N more elements not listed`.
+- Budget: depth <= 22 (Electron apps bury `AXWebArea` under ~7 levels of
+  chrome `AXGroup`s before the DOM starts), <= 1200 nodes visited, <= 80
+  elements collected, deduplicated on `role|title|center x|center y`;
+  `serialized()` sends at most 60 lines to the model and summarizes the
+  rest as `... N more elements not listed`.
 - Only actionable roles are kept (buttons, checkboxes, radio and pop-up
   buttons, menu items and menu buttons, links, text fields and areas,
   sliders, combo and search boxes, tabs, cells, rows, disclosure triangles,
