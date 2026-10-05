@@ -119,6 +119,8 @@ The production site URL is configured in `UserSettings`. Routes include:
 - `POST /openflow/generate-style` (Pro only on the server-key path)
 - `POST /openflow/billing/checkout`
 - `POST /openflow/billing/portal`
+- `POST /openflow/agent/step` (voice agent decision call, see
+  `docs/voice-agent.md`)
 
 `POST /openflow/generate-style` is Pro-only on the server-key path. Free
 accounts write a style themselves. A stored BYO Groq key generates on the Mac
@@ -150,3 +152,6 @@ extending the allowlist, never bypassing the policy;
 - Cloud mode stores usage/error/latency metadata only.
 - Cloud mode does not retain audio or transcript text unless a future explicit opt-in debug feature is designed.
 - Cloud cleanup requests include the transcript plus any selected text and nearby text as context.
+- Voice agent step calls send the spoken instruction, the frontmost app's
+  serialized accessibility-tree state (element roles, titles, values,
+  frames), and the list of running app names. See `docs/voice-agent.md`.
