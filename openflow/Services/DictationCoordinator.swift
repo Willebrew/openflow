@@ -26,6 +26,7 @@ final class DictationCoordinator: ObservableObject {
     private let insertionDiagnostics = InsertionDiagnosticsService()
     private let cloud = OpenFlowCloudService()
     private let cloudAuth = CloudAuthService()
+    private let agent = JevAgentService()
     private var sessionValidationInFlight = false
     private var lastMenuRevalidateAt: Date?
     private var sessionRefreshTimer: Timer?
@@ -34,6 +35,9 @@ final class DictationCoordinator: ObservableObject {
     private lazy var floatingWindow = FloatingDictationWindow(viewModel: pillViewModel)
     private var session: DictationSession?
     private var processingSessionID: UUID?
+    /// Strict text-input probe kicked off at dictation start. Runs off the
+    /// main thread with a bounded wait; audio capture never waits on it.
+    private var focusProbeTask: Task<FocusProbeResult, Never>?
     private var recordingWarningTask: Task<Void, Never>?
     private var recordingLimitTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
@@ -130,6 +134,9 @@ final class DictationCoordinator: ObservableObject {
             guard let self else { return }
             NSApp.activate(ignoringOtherApps: true)
             SettingsWindowController.shared.show(coordinator: self, selectedTab: .settings)
+        }
+        agent.onProgress = { [weak self] status in
+            self?.pillViewModel.subtitle = status
         }
     }
 
@@ -352,6 +359,27 @@ final class DictationCoordinator: ObservableObject {
         session?.metrics.activeApp = contextSnapshot.context.activeAppName
         session?.metrics.category = contextSnapshot.context.category
         session?.metrics.contextAvailable = true
+        startFocusProbe()
+    }
+
+    /// Fires the strict text-input probe off the main thread. The AppKit
+    /// first-responder read happens here (main thread, pure property access);
+    /// the AX half runs detached with a bounded wait so a slow or hung
+    /// frontmost app can never delay audio capture or block the run loop.
+    private func startFocusProbe() {
+        focusProbeTask?.cancel()
+        if TextInputFocusProbe.appKitTextInputActive() {
+            focusProbeTask = Task {
+                FocusProbeResult(verdict: .textInput,
+                                 report: "strict=text appKitField=1",
+                                 elapsed: 0)
+            }
+            return
+        }
+        focusProbeTask = Task.detached(priority: .userInitiated) {
+            await TextInputFocusProbe.axStrictDecisionAsync(timeout: 1.5)
+        }
+        DiagnosticsLog.shared.write("focus probe started async at dictation start")
     }
 
     func refreshAccountState() {
@@ -613,155 +641,31 @@ final class DictationCoordinator: ObservableObject {
                     latencyTrace("whisper \(ms(transcribed.requestTime)) model \(transcribed.model) provider \(transcribed.provider)")
                 }
 
-                let cleanupStarted = Date()
-                let cleaned: CleanupResult
-                let usedRemoteCleanup: Bool
-                if transcribed.cleanupApplied {
-                    usedRemoteCleanup = false
-                    // The backend does not get to decide submission: applyLocalFormatters re-derives
-                    // pressEnter from the spoken transcript.
-                    var inline = CleanupResult(text: transcribed.cleanedText ?? transcribed.text,
-                                               pressEnter: false,
-                                               confidence: transcribed.confidence ?? 0.7,
-                                               notes: transcribed.notes ?? "inline cerebras")
-                    inline = cleanup.applyLocalFormatters(to: inline,
-                                                           context: formattingContext,
-                                                           settings: settings,
-                                                           rawTranscript: transcribed.text)
-                    cleaned = inline
-                } else {
-                    usedRemoteCleanup = cleanup.requiresRemoteCleanup(rawTranscript: transcribed.text,
-                                                                      context: formattingContext,
-                                                                      settings: settings)
-                    if usedRemoteCleanup {
-                        cleaned = try await cleanup.clean(rawTranscript: transcribed.text, context: formattingContext, settings: settings)
-                    } else {
-                        cleaned = cleanup.fastClean(rawTranscript: transcribed.text, context: formattingContext, settings: settings)
-                    }
+                if await shouldRunVoiceAgent() {
+                    await runVoiceAgent(instruction: transcribed.text,
+                                        session: activeSession,
+                                        transcribed: transcribed,
+                                        formattingContext: formattingContext,
+                                        captured: captured)
+                    return
                 }
-                activeSession.metrics.cleanupTime = Date().timeIntervalSince(cleanupStarted)
-                if let cerebrasMs = transcribed.cerebrasRoundTripMs, transcribed.cleanupApplied {
-                    latencyTrace("cerebrasRoundTripMs=\(cerebrasMs) cleanupAuthMs=\(transcribed.cleanupAuthMs ?? 0) localFormat \(ms(activeSession.metrics.cleanupTime)) style \(formattingContext.stylePreset.rawValue)")
-                } else {
-                    latencyTrace("cleanup \(ms(activeSession.metrics.cleanupTime)) \(usedRemoteCleanup ? "remote gpt-oss" : "local-only") style \(formattingContext.stylePreset.rawValue)")
-                }
-
-                let insertionStarted = Date()
-                let insertionSnapshot = context.captureSnapshot(settings: settings)
-                if let originalPID = activeSession.targetProcessIdentifier,
-                   insertionSnapshot.processIdentifier != originalPID {
-                    let raceDescription = "started pid \(originalPID), current pid \(insertionSnapshot.processIdentifier.map(String.init) ?? "none")"
-                    activeSession.metrics.focusRaceDetected = true
-                    activeSession.metrics.focusRaceDescription = raceDescription
-                    log("focus race before insertion: \(raceDescription)")
-                }
-                if activeSession.focusedElement == nil, insertionSnapshot.canInsertText {
-                    activeSession.focusedElement = insertionSnapshot.element
-                    activeSession.focusedWindow = insertionSnapshot.focusedWindow
-                    activeSession.targetProcessIdentifier = insertionSnapshot.processIdentifier
-                    activeSession.targetCanInsertText = insertionSnapshot.canInsertText
-                    activeSession.selectedRange = insertionSnapshot.selectedRange
-                }
-                var finalText = applyPhrases(to: cleaned.text)
-                let emptyFinalText = finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                guard !emptyFinalText || cleaned.pressEnter else {
-                    throw OpenflowError.transcriptionFailed("Groq returned an empty transcript.")
-                }
-                var insertionResult: InsertionResult
-                if shouldUseCapturedElement(for: formattingContext.category),
-                   let focusedElement = activeSession.focusedElement {
-                    insertionResult = await insertion.insert(finalText,
-                                                             into: focusedElement,
-                                                             pressEnter: cleaned.pressEnter,
-                                                             settings: settings,
-                                                             category: formattingContext.category,
-                                                             targetProcessIdentifier: activeSession.targetProcessIdentifier)
-                } else {
-                    insertionResult = await insertion.insert(finalText,
-                                                             pressEnter: cleaned.pressEnter,
-                                                             settings: settings,
-                                                             category: formattingContext.category,
-                                                             targetProcessIdentifier: activeSession.targetProcessIdentifier)
-                }
-                if !insertionResult.succeeded,
-                   activeSession.metrics.focusRaceDetected == true,
-                   let focusRaceDescription = activeSession.metrics.focusRaceDescription {
-                    let existing = insertionResult.failureReason ?? "Unknown insertion failure"
-                    insertionResult.failureReason = "\(existing); focus race before insertion: \(focusRaceDescription)"
-                }
-                let succeeded = insertionResult.succeeded
-                activeSession.metrics.insertionTime = Date().timeIntervalSince(insertionStarted)
-                activeSession.metrics.insertionMethod = insertionResult.method.rawValue
-                activeSession.metrics.insertionVerified = insertionResult.verified
-                activeSession.metrics.insertionAttempts = insertionResult.attemptCount
-                activeSession.metrics.insertionFailureReason = insertionResult.failureReason
-                activeSession.metrics.totalTime = Date().timeIntervalSince(activeSession.startedAt)
-                if !succeeded {
-                    log("insertion failed for \(formattingContext.activeAppName) / \(formattingContext.category.rawValue): \(insertionResult.failureReason ?? "unknown")")
-                    insertionDiagnostics.writeFailedInsertion(result: insertionResult,
-                                                              category: formattingContext.category,
-                                                              metrics: activeSession.metrics)
-                } else {
-                    log("inserted via \(insertionResult.method.rawValue), verified \(insertionResult.verified), attempts \(insertionResult.attemptCount)")
-                }
-                currentMetrics = activeSession.metrics
-
-                history.add(DictationHistoryItem(timestamp: Date(),
-                                                 finalText: finalText,
-                                                 rawTranscript: transcribed.text,
-                                                 appName: formattingContext.activeAppName,
-                                                 bundleID: formattingContext.bundleID,
-                                                 category: formattingContext.category,
-                                                 stylePreset: formattingContext.stylePreset,
-                                                 insertionSucceeded: succeeded,
-                                                 insertion: insertionResult,
-                                                 metrics: activeSession.metrics),
-                            settings: settings)
-                history.recordLifetime(text: finalText,
-                                       audioSeconds: activeSession.metrics.audioDuration,
-                                       appName: formattingContext.activeAppName,
-                                       bundleID: formattingContext.bundleID)
-                let audioBytes: Int = {
-                    if let size = try? FileManager.default.attributesOfItem(atPath: captured.url.path)[.size] as? NSNumber {
-                        return size.intValue
-                    }
-                    return 0
-                }()
-                let syncedLocalActivity = await syncLocalProviderActivityIfNeeded(
-                    id: activeSession.id,
-                    text: finalText,
-                    audioSeconds: activeSession.metrics.audioDuration,
-                    audioBytes: audioBytes,
-                    timestamp: Date(),
-                    provider: transcribed.provider,
-                    appName: formattingContext.activeAppName,
-                    bundleID: formattingContext.bundleID
-                )
-                if !syncedLocalActivity {
-                    _ = await refreshCloudStatsIfSignedIn()
-                }
-                let postRelease = activeSession.metrics.encodingTime
-                    + activeSession.metrics.uploadAndTranscriptionTime
-                    + activeSession.metrics.cleanupTime
-                    + activeSession.metrics.insertionTime
-                latencyTrace("insert \(ms(activeSession.metrics.insertionTime)) via \(insertionResult.method.rawValue)")
-                latencyTrace("post-release \(ms(postRelease)) encode \(ms(activeSession.metrics.encodingTime)) whisper \(ms(activeSession.metrics.uploadAndTranscriptionTime)) cleanup \(ms(activeSession.metrics.cleanupTime)) \(transcribed.cleanupApplied ? "inline-cerebras" : usedRemoteCleanup ? "remote" : "local") insert \(ms(activeSession.metrics.insertionTime)) app \(formattingContext.activeAppName) style \(formattingContext.stylePreset.rawValue) audio \(ms(activeSession.metrics.audioDuration)) hotkey \(ms(activeSession.metrics.hotkeyToRecordingStart))")
-                log("done total \(ms(activeSession.metrics.totalTime)), groq \(ms(activeSession.metrics.uploadAndTranscriptionTime)), cleanup \(ms(activeSession.metrics.cleanupTime))")
-                guard processingSessionID == activeSession.id else { return }
-                pillViewModel.state = succeeded ? .success : .error("Insertion failed")
-                pillViewModel.subtitle = succeeded ? "Inserted" : "Could not insert"
-                revealPill()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
-                    guard let self, self.processingSessionID == activeSession.id else { return }
-                    self.processingSessionID = nil
-                    self.resetPillToIdle()
-                    self.pillViewModel.subtitle = "Ready"
-                    self.applyPillVisibility()
-                }
+                try await finishInsertion(transcribed: transcribed,
+                                          session: activeSession,
+                                          formattingContext: formattingContext,
+                                          captured: captured)
             } catch {
                 guard processingSessionID == activeSession.id else { return }
-                if case OpenflowError.noAudioCaptured = error {
-                    log("ignored empty dictation: no voiced audio captured")
+                if case OpenflowError.noAudioCaptured(let reason) = error {
+                    let wallMs = ms(Date().timeIntervalSince(activeSession.startedAt))
+                    let probeNote: String
+                    if let probeResult = await focusProbeTask?.value {
+                        probeNote = "probe=\(probeResult.report) elapsed=\(ms(probeResult.elapsed))"
+                    } else {
+                        probeNote = "probe=none"
+                    }
+                    DiagnosticsLog.shared.write(
+                        "ignored empty dictation: reason=\(reason ?? "n/a") wall=\(wallMs) \(probeNote)")
+                    log("ignored empty dictation: \(reason ?? "no voiced audio captured")")
                     processingSessionID = nil
                     currentMetrics = activeSession.metrics
                     resetPillToIdle()
@@ -786,6 +690,273 @@ final class DictationCoordinator: ObservableObject {
                                            transcript: transcribedResult,
                                            context: formattingContext)
             }
+        }
+    }
+
+    /// Dictation with no text field focused routes the spoken instruction to
+    /// the Jev voice agent instead of inserting text. Both probes run off the
+    /// main thread with bounded waits; any inconclusive signal dictates.
+    private func shouldRunVoiceAgent() async -> Bool {
+        guard settings.voiceAgentEnabled else {
+            DiagnosticsLog.shared.write("routing: dictate (voice agent toggle off)")
+            return false
+        }
+        let startProbe = await focusProbeTask?.value
+        DiagnosticsLog.shared.write(
+            "routing probe at start: \(startProbe?.report ?? "none")"
+                + (startProbe.map { " (elapsed \(ms($0.elapsed)))" } ?? ""))
+        let endProbe = await TextInputFocusProbe.strictDecisionAsync(timeout: 0.6)
+        DiagnosticsLog.shared.write(
+            "routing probe at end: \(endProbe.report) (elapsed \(ms(endProbe.elapsed)))")
+        let route = VoiceAgentRouting.decide(voiceAgentEnabled: true,
+                                             probeAtStart: startProbe?.verdict,
+                                             probeAtEnd: endProbe.verdict)
+        DiagnosticsLog.shared.write("routing: \(route == .voiceAgent ? "voice-agent" : "dictate")")
+        return route == .voiceAgent
+    }
+
+    private func runVoiceAgent(instruction: String,
+                               session: DictationSession,
+                               transcribed: TranscriptionResult,
+                               formattingContext: FormattingContext,
+                               captured: CapturedAudio) async {
+        guard let baseURL = URL(string: settings.cloudBaseURL), !settings.cloudBaseURL.isEmpty else {
+            await recoverTranscriptAsDictation(instruction: instruction,
+                                               transcribed: transcribed,
+                                               session: session,
+                                               formattingContext: formattingContext,
+                                               captured: captured,
+                                               agentSummary: "cloud URL unavailable")
+            return
+        }
+        DiagnosticsLog.shared.write("routing to voice agent: \(instruction)")
+        log("routing to voice agent: \(instruction)")
+        pillViewModel.subtitle = "Working"
+        let result = await agent.run(instruction: instruction,
+                                     settings: settings,
+                                     baseURL: baseURL)
+        var metrics = session.metrics
+        metrics.totalTime = Date().timeIntervalSince(session.startedAt)
+        metrics.insertionMethod = "voice-agent"
+        metrics.insertionVerified = result.completed
+        metrics.insertionAttempts = result.steps
+        metrics.insertionFailureReason = result.completed ? nil : result.summary
+        metrics.provider = result.provider
+        metrics.model = result.model
+        currentMetrics = metrics
+        log("voice agent finished: completed=\(result.completed), steps=\(result.steps), \(result.summary)")
+        DiagnosticsLog.shared.write(
+            "voice agent finished: completed=\(result.completed) steps=\(result.steps) \(result.summary)")
+        if VoiceAgentRouting.needsTranscriptRecovery(completed: result.completed,
+                                                     steps: result.steps) {
+            await recoverTranscriptAsDictation(instruction: instruction,
+                                               transcribed: transcribed,
+                                               session: session,
+                                               formattingContext: formattingContext,
+                                               captured: captured,
+                                               agentSummary: result.summary)
+            return
+        }
+        _ = await refreshCloudStatsIfSignedIn()
+        guard processingSessionID == session.id else { return }
+        pillViewModel.state = .success
+        pillViewModel.subtitle = "Done"
+        revealPill()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.processingSessionID == session.id else { return }
+            self.processingSessionID = nil
+            self.resetPillToIdle()
+            self.pillViewModel.subtitle = "Ready"
+            self.applyPillVisibility()
+        }
+    }
+
+    /// The agent declined, failed, or took zero actions -- the transcript
+    /// still belongs to the user. Copy it to the clipboard first so it can
+    /// never be lost, then run the normal cleanup + insertion path (which
+    /// also records history).
+    private func recoverTranscriptAsDictation(instruction: String,
+                                              transcribed: TranscriptionResult,
+                                              session: DictationSession,
+                                              formattingContext: FormattingContext,
+                                              captured: CapturedAudio,
+                                              agentSummary: String) async {
+        DiagnosticsLog.shared.write("voice agent fallback: recovering transcript (\(agentSummary))")
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(instruction, forType: .string)
+        log("voice agent gave up (\(agentSummary)); inserting transcript instead")
+        pillViewModel.subtitle = "Inserting text"
+        do {
+            try await finishInsertion(transcribed: transcribed,
+                                      session: session,
+                                      formattingContext: formattingContext,
+                                      captured: captured)
+        } catch {
+            DiagnosticsLog.shared.write(
+                "voice agent fallback insertion failed: \(String(describing: error))")
+            saveFailedDictationHistory(error: error,
+                                       session: session,
+                                       transcript: transcribed,
+                                       context: formattingContext)
+            showError(error, sessionID: session.id)
+        }
+    }
+
+    /// Cleans up the transcript, inserts it, records metrics/history/stats,
+    /// and drives the result pill. Shared by normal dictation and the voice
+    /// agent transcript-recovery path.
+    private func finishInsertion(transcribed: TranscriptionResult,
+                                 session: DictationSession,
+                                 formattingContext: FormattingContext,
+                                 captured: CapturedAudio) async throws {
+        var activeSession = session
+        let cleanupStarted = Date()
+        let cleaned: CleanupResult
+        let usedRemoteCleanup: Bool
+        if transcribed.cleanupApplied {
+            usedRemoteCleanup = false
+            // The backend does not get to decide submission: applyLocalFormatters re-derives
+            // pressEnter from the spoken transcript.
+            var inline = CleanupResult(text: transcribed.cleanedText ?? transcribed.text,
+                                       pressEnter: false,
+                                       confidence: transcribed.confidence ?? 0.7,
+                                       notes: transcribed.notes ?? "inline cerebras")
+            inline = cleanup.applyLocalFormatters(to: inline,
+                                                   context: formattingContext,
+                                                   settings: settings,
+                                                   rawTranscript: transcribed.text)
+            cleaned = inline
+        } else {
+            usedRemoteCleanup = cleanup.requiresRemoteCleanup(rawTranscript: transcribed.text,
+                                                              context: formattingContext,
+                                                              settings: settings)
+            if usedRemoteCleanup {
+                cleaned = try await cleanup.clean(rawTranscript: transcribed.text, context: formattingContext, settings: settings)
+            } else {
+                cleaned = cleanup.fastClean(rawTranscript: transcribed.text, context: formattingContext, settings: settings)
+            }
+        }
+        activeSession.metrics.cleanupTime = Date().timeIntervalSince(cleanupStarted)
+        if let cerebrasMs = transcribed.cerebrasRoundTripMs, transcribed.cleanupApplied {
+            latencyTrace("cerebrasRoundTripMs=\(cerebrasMs) cleanupAuthMs=\(transcribed.cleanupAuthMs ?? 0) localFormat \(ms(activeSession.metrics.cleanupTime)) style \(formattingContext.stylePreset.rawValue)")
+        } else {
+            latencyTrace("cleanup \(ms(activeSession.metrics.cleanupTime)) \(usedRemoteCleanup ? "remote gpt-oss" : "local-only") style \(formattingContext.stylePreset.rawValue)")
+        }
+
+        let insertionStarted = Date()
+        let insertionSnapshot = context.captureSnapshot(settings: settings)
+        if let originalPID = activeSession.targetProcessIdentifier,
+           insertionSnapshot.processIdentifier != originalPID {
+            let raceDescription = "started pid \(originalPID), current pid \(insertionSnapshot.processIdentifier.map(String.init) ?? "none")"
+            activeSession.metrics.focusRaceDetected = true
+            activeSession.metrics.focusRaceDescription = raceDescription
+            log("focus race before insertion: \(raceDescription)")
+        }
+        if activeSession.focusedElement == nil, insertionSnapshot.canInsertText {
+            activeSession.focusedElement = insertionSnapshot.element
+            activeSession.focusedWindow = insertionSnapshot.focusedWindow
+            activeSession.targetProcessIdentifier = insertionSnapshot.processIdentifier
+            activeSession.targetCanInsertText = insertionSnapshot.canInsertText
+            activeSession.selectedRange = insertionSnapshot.selectedRange
+        }
+        var finalText = applyPhrases(to: cleaned.text)
+        let emptyFinalText = finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !emptyFinalText || cleaned.pressEnter else {
+            throw OpenflowError.transcriptionFailed("Groq returned an empty transcript.")
+        }
+        var insertionResult: InsertionResult
+        if shouldUseCapturedElement(for: formattingContext.category),
+           let focusedElement = activeSession.focusedElement {
+            insertionResult = await insertion.insert(finalText,
+                                                     into: focusedElement,
+                                                     pressEnter: cleaned.pressEnter,
+                                                     settings: settings,
+                                                     category: formattingContext.category,
+                                                     targetProcessIdentifier: activeSession.targetProcessIdentifier)
+        } else {
+            insertionResult = await insertion.insert(finalText,
+                                                     pressEnter: cleaned.pressEnter,
+                                                     settings: settings,
+                                                     category: formattingContext.category,
+                                                     targetProcessIdentifier: activeSession.targetProcessIdentifier)
+        }
+        if !insertionResult.succeeded,
+           activeSession.metrics.focusRaceDetected == true,
+           let focusRaceDescription = activeSession.metrics.focusRaceDescription {
+            let existing = insertionResult.failureReason ?? "Unknown insertion failure"
+            insertionResult.failureReason = "\(existing); focus race before insertion: \(focusRaceDescription)"
+        }
+        let succeeded = insertionResult.succeeded
+        activeSession.metrics.insertionTime = Date().timeIntervalSince(insertionStarted)
+        activeSession.metrics.insertionMethod = insertionResult.method.rawValue
+        activeSession.metrics.insertionVerified = insertionResult.verified
+        activeSession.metrics.insertionAttempts = insertionResult.attemptCount
+        activeSession.metrics.insertionFailureReason = insertionResult.failureReason
+        activeSession.metrics.totalTime = Date().timeIntervalSince(activeSession.startedAt)
+        if !succeeded {
+            DiagnosticsLog.shared.write(
+                "dictation failed for \(formattingContext.activeAppName) / \(formattingContext.category.rawValue): \(insertionResult.failureReason ?? "unknown")")
+            log("insertion failed for \(formattingContext.activeAppName) / \(formattingContext.category.rawValue): \(insertionResult.failureReason ?? "unknown")")
+            insertionDiagnostics.writeFailedInsertion(result: insertionResult,
+                                                      category: formattingContext.category,
+                                                      metrics: activeSession.metrics)
+        } else {
+            log("inserted via \(insertionResult.method.rawValue), verified \(insertionResult.verified), attempts \(insertionResult.attemptCount)")
+        }
+        currentMetrics = activeSession.metrics
+
+        history.add(DictationHistoryItem(timestamp: Date(),
+                                         finalText: finalText,
+                                         rawTranscript: transcribed.text,
+                                         appName: formattingContext.activeAppName,
+                                         bundleID: formattingContext.bundleID,
+                                         category: formattingContext.category,
+                                         stylePreset: formattingContext.stylePreset,
+                                         insertionSucceeded: succeeded,
+                                         insertion: insertionResult,
+                                         metrics: activeSession.metrics),
+                    settings: settings)
+        history.recordLifetime(text: finalText,
+                               audioSeconds: activeSession.metrics.audioDuration,
+                               appName: formattingContext.activeAppName,
+                               bundleID: formattingContext.bundleID)
+        let audioBytes: Int = {
+            if let size = try? FileManager.default.attributesOfItem(atPath: captured.url.path)[.size] as? NSNumber {
+                return size.intValue
+            }
+            return 0
+        }()
+        let syncedLocalActivity = await syncLocalProviderActivityIfNeeded(
+            id: activeSession.id,
+            text: finalText,
+            audioSeconds: activeSession.metrics.audioDuration,
+            audioBytes: audioBytes,
+            timestamp: Date(),
+            provider: transcribed.provider,
+            appName: formattingContext.activeAppName,
+            bundleID: formattingContext.bundleID
+        )
+        if !syncedLocalActivity {
+            _ = await refreshCloudStatsIfSignedIn()
+        }
+        let postRelease = activeSession.metrics.encodingTime
+            + activeSession.metrics.uploadAndTranscriptionTime
+            + activeSession.metrics.cleanupTime
+            + activeSession.metrics.insertionTime
+        latencyTrace("insert \(ms(activeSession.metrics.insertionTime)) via \(insertionResult.method.rawValue)")
+        latencyTrace("post-release \(ms(postRelease)) encode \(ms(activeSession.metrics.encodingTime)) whisper \(ms(activeSession.metrics.uploadAndTranscriptionTime)) cleanup \(ms(activeSession.metrics.cleanupTime)) \(transcribed.cleanupApplied ? "inline-cerebras" : usedRemoteCleanup ? "remote" : "local") insert \(ms(activeSession.metrics.insertionTime)) app \(formattingContext.activeAppName) style \(formattingContext.stylePreset.rawValue) audio \(ms(activeSession.metrics.audioDuration)) hotkey \(ms(activeSession.metrics.hotkeyToRecordingStart))")
+        log("done total \(ms(activeSession.metrics.totalTime)), groq \(ms(activeSession.metrics.uploadAndTranscriptionTime)), cleanup \(ms(activeSession.metrics.cleanupTime))")
+        guard processingSessionID == activeSession.id else { return }
+        pillViewModel.state = succeeded ? .success : .error("Insertion failed")
+        pillViewModel.subtitle = succeeded ? "Inserted" : "Could not insert"
+        revealPill()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+            guard let self, self.processingSessionID == activeSession.id else { return }
+            self.processingSessionID = nil
+            self.resetPillToIdle()
+            self.pillViewModel.subtitle = "Ready"
+            self.applyPillVisibility()
         }
     }
 
@@ -918,6 +1089,7 @@ final class DictationCoordinator: ObservableObject {
 
     private func showError(_ error: Error, sessionID: UUID? = nil) {
         log("error: \(error.localizedDescription)")
+        DiagnosticsLog.shared.write("error shown: \(String(describing: error))")
         cancelRecordingLimit()
         pillViewModel.state = .error(error.localizedDescription)
         pillViewModel.subtitle = error.localizedDescription
@@ -1094,6 +1266,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func log(_ message: String) {
+        DiagnosticsLog.shared.write(message)
         guard settings.debugLogsEnabled else { return }
         let line = "\(Date().formatted(date: .omitted, time: .standard))  \(message)"
         debugLog.insert(line, at: 0)

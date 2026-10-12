@@ -48,7 +48,9 @@ if rg -F "Version 0.1" openflow; then
   fail "settings still hardcodes Version 0.1"
 fi
 
-if rg -n "operatorMode|\\.agent|case agent|isOperatorActive|MacActionService|agentPrompt|agentStatus|agentIsRunning|agentService" openflow/App openflow/Models openflow/Services openflow/Views; then
+# The removed operator runtime stays banned; the Jev voice agent
+# (JevAgentService + cloud.agentStep) is the sanctioned replacement.
+if rg -n "operatorMode|case agent|isOperatorActive|MacActionService|agentPrompt|agentStatus|agentIsRunning" openflow/App openflow/Models openflow/Services openflow/Views; then
   fail "Operator runtime route is present"
 fi
 
@@ -74,6 +76,7 @@ test -f scripts/check-permissions-flow-safety.mjs || fail "missing permissions f
 test -f scripts/check-history-ui-safety.mjs || fail "missing history UI safety check"
 test -f scripts/check-hub-page-chrome.mjs || fail "missing hub page chrome check"
 test -f scripts/check-terminal-cleanup-safety.mjs || fail "missing terminal cleanup safety check"
+test -f scripts/check-voice-agent-safety.swift || fail "missing voice agent safety check"
 test -f release/exportOptions.template.plist || fail "missing Developer ID export options template"
 test -f release/release-evidence.template.json || fail "missing release evidence template"
 cloud_client="openflow/Services/OpenFlowCloudService.swift"
@@ -312,5 +315,24 @@ xcrun --sdk macosx swiftc -sdk "$SDK" \
   -o "$HOTKEY_POLICY_CHECK"
 "$HOTKEY_POLICY_CHECK"
 rm -f "$HOTKEY_POLICY_CHECK"
+
+VOICE_AGENT_CHECK="$(mktemp /tmp/openflow-voice-agent-check.XXXXXX)"
+xcrun --sdk macosx swiftc -sdk "$SDK" \
+  -target arm64-apple-macos14.0 \
+  openflow/Models/UserSettings.swift \
+  openflow/Models/DictationModels.swift \
+  openflow/Models/HomeActivityStats.swift \
+  openflow/Services/KeychainService.swift \
+  openflow/Services/CloudURLPolicy.swift \
+  openflow/Services/CloudSessionValidator.swift \
+  openflow/Services/AudioFileFormat.swift \
+  openflow/Services/OpenFlowCloudService.swift \
+  openflow/Services/OpenFlowProviderRouting.swift \
+  openflow/Services/TextInputFocusProbe.swift \
+  openflow/Services/VoiceAgentRouting.swift \
+  scripts/check-voice-agent-safety.swift \
+  -o "$VOICE_AGENT_CHECK"
+"$VOICE_AGENT_CHECK"
+rm -f "$VOICE_AGENT_CHECK"
 
 echo "production readiness static checks passed"
