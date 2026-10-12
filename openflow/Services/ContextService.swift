@@ -161,6 +161,10 @@ final class ContextService {
         let isBrowser = isKnownBrowser(bundleID: app.bundleIdentifier ?? "")
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(axApp, 0.12)
+        // Chromium/Electron only populate their web AX tree once an assistive
+        // client opts in; without these a focused web field is invisible.
+        AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         var fallbackElement: AXUIElement?
         var focusedWindowElement: AXUIElement?
         var canInsertText = isBrowser

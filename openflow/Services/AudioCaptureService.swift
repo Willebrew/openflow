@@ -175,7 +175,7 @@ nonisolated final class AudioCaptureService: NSObject, ObservableObject, AVCaptu
             } else {
                 removeCapturedFile(at: url)
             }
-            throw OpenflowError.noAudioCaptured
+            throw OpenflowError.noAudioCaptured(reason: "capture session stopped during start")
         }
         return started
     }
@@ -186,11 +186,11 @@ nonisolated final class AudioCaptureService: NSObject, ObservableObject, AVCaptu
         let state = takeCaptureState()
         restoreDefaultInputIfNeeded()
         guard let outputURL = state.outputURL else {
-            throw OpenflowError.noAudioCaptured
+            throw OpenflowError.noAudioCaptured(reason: "no output file produced")
         }
         guard state.didCaptureAudio else {
             removeCapturedFile(at: outputURL)
-            throw OpenflowError.noAudioCaptured
+            throw OpenflowError.noAudioCaptured(reason: "no audio buffers reached the tap")
         }
         let duration = state.startTime.map { Date().timeIntervalSince($0) } ?? 0
         let averageLevel = state.levelSampleCount > 0
@@ -200,7 +200,13 @@ nonisolated final class AudioCaptureService: NSObject, ObservableObject, AVCaptu
               state.maxInputLevel >= speechLevelThreshold,
               state.voicedDuration >= minimumVoicedDuration else {
             removeCapturedFile(at: outputURL)
-            throw OpenflowError.noAudioCaptured
+            throw OpenflowError.noAudioCaptured(
+                reason: String(
+                    format: "gate fail: duration %.3fs (min %.2f), peak %.3f (min %.3f), voiced %.3fs (min %.2f), avg %.3f",
+                    duration, minimumRecordingDuration,
+                    state.maxInputLevel, speechLevelThreshold,
+                    state.voicedDuration, minimumVoicedDuration,
+                    averageLevel))
         }
         var uploadURL: URL
         do {

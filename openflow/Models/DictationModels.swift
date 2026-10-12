@@ -193,7 +193,7 @@ enum OpenflowError: LocalizedError {
     case missingAPIKey
     case microphoneUnavailable
     case microphoneInputFailed(String)
-    case noAudioCaptured
+    case noAudioCaptured(reason: String? = nil)
     case transcriptionFailed(String)
     case cleanupFailed(String)
     case insertionFailed
