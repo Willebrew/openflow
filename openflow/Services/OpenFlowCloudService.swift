@@ -697,7 +697,7 @@ final class OpenFlowCloudService {
     }
 
     private func authorize(_ request: inout URLRequest) throws {
-        let sessionToken = injectedSessionToken ?? (try keychain.cloudSessionToken())
+        let sessionToken = try injectedSessionToken ?? keychain.cloudSessionToken()
         guard let sessionToken, !sessionToken.isEmpty else {
             throw OpenflowError.cloudAuthenticationRequired
         }
