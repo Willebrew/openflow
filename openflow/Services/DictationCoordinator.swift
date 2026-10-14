@@ -360,8 +360,9 @@ final class DictationCoordinator: ObservableObject {
         guard session?.id == sessionID else { return }
         let contextService = context
         let currentSettings = settings
+        let contextInput = ContextCaptureInput(settings: currentSettings)
         Task.detached(priority: .userInitiated) { [weak self] in
-            let contextSnapshot = contextService.captureSnapshot(settings: currentSettings,
+            let contextSnapshot = contextService.captureSnapshot(input: contextInput,
                                                                  activeApplication: frontmostApp,
                                                                  searchDescendants: false)
             await MainActor.run {
@@ -637,13 +638,14 @@ final class DictationCoordinator: ObservableObject {
             let audio = self.audio
             let contextService = self.context
             let currentSettings = self.settings
+            let contextInput = ContextCaptureInput(settings: currentSettings)
             var transcribedResult: TranscriptionResult?
             var formattingContext: FormattingContext
             if let capturedContext = activeSession.context {
                 formattingContext = capturedContext
             } else {
                 formattingContext = await Task.detached(priority: .userInitiated) {
-                    contextService.capture(settings: currentSettings)
+                    contextService.capture(input: contextInput)
                 }.value
             }
             do {
@@ -673,7 +675,7 @@ final class DictationCoordinator: ObservableObject {
                     formattingContext = capturedContext
                 } else {
                     formattingContext = await Task.detached(priority: .userInitiated) {
-                        contextService.capture(settings: currentSettings)
+                        contextService.capture(input: contextInput)
                     }.value
                 }
                 applyResolvedStyle(to: &formattingContext)
@@ -915,8 +917,10 @@ final class DictationCoordinator: ObservableObject {
         }
 
         let insertionStarted = Date()
+        let contextInput = ContextCaptureInput(settings: settings)
+        let contextService = context
         let insertionSnapshot = await Task.detached(priority: .userInitiated) {
-            contextService.captureSnapshot(settings: currentSettings)
+            contextService.captureSnapshot(input: contextInput)
         }.value
         if let originalPID = activeSession.targetProcessIdentifier,
            insertionSnapshot.processIdentifier != originalPID {
@@ -1149,8 +1153,9 @@ final class DictationCoordinator: ObservableObject {
         let app = session.targetProcessIdentifier.flatMap { NSRunningApplication(processIdentifier: $0) }
         let contextService = context
         let currentSettings = settings
+        let contextInput = ContextCaptureInput(settings: currentSettings)
         let snapshot = await Task.detached(priority: .userInitiated) {
-            contextService.captureSnapshot(settings: currentSettings,
+            contextService.captureSnapshot(input: contextInput,
                                            activeApplication: app,
                                            searchDescendants: false)
         }.value
