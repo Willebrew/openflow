@@ -1,5 +1,7 @@
 import Foundation
 import AppKit
+import Combine
+import os
 
 /// Append-only diagnostics file for field debugging. Unlike the in-memory
 /// `debugLog` (gated on the Debug logs toggle and capped at 200 lines), this
@@ -59,5 +61,81 @@ final class DiagnosticsLog {
               data.count > keepBytes else { return }
         let tail = data.subdata(in: (data.count - keepBytes)..<data.count)
         try? tail.write(to: url, options: .atomic)
+    }
+}
+
+/// Live diagnostics state for the Settings diagnostics page only. It sits on
+/// its own ObservableObject so appends and metric updates never invalidate the
+/// hub window or unrelated pages during processing.
+@MainActor
+final class DiagnosticsStore: ObservableObject {
+    @Published var entries: [String] = []
+    @Published var currentMetrics = LatencyMetrics()
+}
+
+/// os_signpost instrumentation for the two latency budgets this app cares
+/// about: hub tab switches and dictation stop -> insert. Each interval is also
+/// written to `DiagnosticsLog` so timings can be read back from the debug log
+/// without Instruments attached.
+enum OpenflowSignpost {
+    private static let poster = OSSignposter(subsystem: "com.neuroquestlabs.openflow",
+                                           category: .pointsOfInterest)
+
+    private static var tabSwitchState: OSSignpostIntervalState?
+    private static var tabSwitchBegan: Date?
+    private static var tabSwitchDestination: String?
+
+    private static var dictationState: OSSignpostIntervalState?
+    private static var dictationBegan: Date?
+
+    @MainActor
+    static func beginTabSwitch(to tab: String) {
+        endPendingTabSwitch(reason: "superseded")
+        tabSwitchState = poster.beginInterval("HubTabSwitch")
+        tabSwitchBegan = Date()
+        tabSwitchDestination = tab
+    }
+
+    /// Ends the pending tab-switch interval. Called when the destination page
+    /// reports it is visible; extra calls are no-ops so both the page's own
+    /// onAppear and the post-commit tick can race here safely.
+    @MainActor
+    static func endTabSwitch(arrived tab: String) {
+        guard let state = tabSwitchState, let began = tabSwitchBegan else { return }
+        poster.endInterval("HubTabSwitch", state)
+        let elapsed = Date().timeIntervalSince(began)
+        tabSwitchState = nil
+        tabSwitchBegan = nil
+        tabSwitchDestination = nil
+        DiagnosticsLog.shared.write("hub tab switch to \(tab): \(String(format: "%.0f", elapsed * 1000))ms")
+    }
+
+    @MainActor
+    private static func endPendingTabSwitch(reason: String) {
+        guard let state = tabSwitchState else { return }
+        poster.endInterval("HubTabSwitch", state)
+        DiagnosticsLog.shared.write("hub tab switch to \(tabSwitchDestination ?? "?"): \(reason)")
+        tabSwitchState = nil
+        tabSwitchBegan = nil
+        tabSwitchDestination = nil
+    }
+
+    @MainActor
+    static func beginDictationPipeline() {
+        endDictationPipeline(outcome: "superseded")
+        dictationState = poster.beginInterval("DictationStopToInsert")
+        dictationBegan = Date()
+    }
+
+    /// Ends the dictation stop -> insert interval and logs the wall-clock
+    /// duration. `outcome` is e.g. "inserted", "voice-agent", "error".
+    @MainActor
+    static func endDictationPipeline(outcome: String) {
+        guard let state = dictationState, let began = dictationBegan else { return }
+        poster.endInterval("DictationStopToInsert", state)
+        let elapsed = Date().timeIntervalSince(began)
+        dictationState = nil
+        dictationBegan = nil
+        DiagnosticsLog.shared.write("dictation stop->insert (\(outcome)): \(String(format: "%.0f", elapsed * 1000))ms")
     }
 }

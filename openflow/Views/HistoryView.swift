@@ -3,6 +3,8 @@ import SwiftUI
 
 struct HistoryView: View {
     @EnvironmentObject private var coordinator: DictationCoordinator
+    @EnvironmentObject private var history: HistoryService
+    @EnvironmentObject private var settings: UserSettings
     @State private var query = ""
     @State private var copiedID: UUID?
     @State private var pendingDeletion: DictationHistoryItem?

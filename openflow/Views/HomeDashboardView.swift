@@ -3,6 +3,12 @@ import AppKit
 
 struct HomeDashboardView: View {
     @EnvironmentObject private var coordinator: DictationCoordinator
+    @EnvironmentObject private var settings: UserSettings
+    @EnvironmentObject private var permissions: PermissionsService
+    @EnvironmentObject private var history: HistoryService
+    @EnvironmentObject private var credentials: CredentialStore
+    @EnvironmentObject private var cloudAccount: CloudAccountStore
+    @EnvironmentObject private var homeStats: HomeStatsStore
     let cloudSignedIn: Bool
     let onOpenHistory: () -> Void
     let onOpenApps: () -> Void
@@ -324,9 +330,7 @@ struct HomeDashboardView: View {
     }
 
     private var hasConfiguredProvider: Bool {
-        if coordinator.hasAPIKey() { return true }
-        let token = (try? KeychainService.shared.cloudSessionToken()) ?? nil
-        return token?.isEmpty == false
+        credentials.hasConfiguredProvider
     }
 
     private var completedSetupSteps: Int {
@@ -339,58 +343,32 @@ struct HomeDashboardView: View {
         permissionsReady && hasConfiguredProvider
     }
 
+    /// Aggregation lives in `HomeStatsStore`, which rebuilds this snapshot
+    /// off the main thread whenever history or cloud stats change. Signed-in
+    /// Home keeps the previous behavior: `if cloudSignedIn` it aggregates
+    /// cloud days only (`aggregate(history: [])`), never mixing local clips.
+    private var stats: HomeStatsSnapshot {
+        homeStats.snapshot
+    }
+
     private var activityDays: [HomeActivityDay] {
-        if cloudSignedIn {
-            return HomeActivityStats.aggregate(
-                history: [],
-                cloudDays: coordinator.cloudStats.days.map {
-                    HomeActivityDay(
-                        dayKey: $0.dayKey,
-                        words: $0.words,
-                        audioSeconds: $0.audioSeconds,
-                        dictations: $0.dictations
-                    )
-                }
-            )
-        }
-        return HomeActivityStats.aggregate(
-            history: coordinator.history.items.map {
-                (timestamp: $0.timestamp, finalText: $0.finalText, audioDuration: $0.metrics.audioDuration)
-            },
-            cloudDays: []
-        )
+        stats.activityDays
     }
 
     private var totalWords: Int {
-        if cloudSignedIn {
-            return max(coordinator.cloudStats.lifetimeWords, coordinator.history.lifetimeWords)
-        }
-        return HomeActivityStats.lifetimeWords(
-            days: activityDays,
-            localLifetime: coordinator.history.lifetimeWords
-        )
+        stats.totalWords
     }
 
     private var averageWPM: Int {
-        if cloudSignedIn {
-            let cloud = coordinator.cloudStats.lifetimeAverageWPM
-            if cloud > 0 { return cloud }
-        }
-        return HomeActivityStats.averageWPM(
-            words: coordinator.history.lifetimeWords,
-            audioSeconds: coordinator.history.lifetimeAudioSeconds
-        )
+        stats.averageWPM
     }
 
     private var weeklyStreak: Int {
-        HomeActivityStats.consecutiveStreak(days: activityDays)
+        stats.weeklyStreak
     }
 
     private var lifetimeAudioSeconds: Double {
-        if cloudSignedIn {
-            return max(coordinator.cloudStats.lifetimeAudioSeconds, coordinator.history.lifetimeAudioSeconds)
-        }
-        return coordinator.history.lifetimeAudioSeconds
+        stats.lifetimeAudioSeconds
     }
 
     /// Same lifetime words + hold time as the footer, never a never-backfilled stored gauge.
@@ -408,33 +386,23 @@ struct HomeDashboardView: View {
     }
 
     private var weekWords: (thisWeek: Int, lastWeek: Int) {
-        HomeActivityStats.weekWords(days: activityDays)
+        stats.weekWords
     }
 
     private var weekSaved: (thisWeek: Double, lastWeek: Double) {
-        HomeActivityStats.weekTimeSaved(days: activityDays)
+        stats.weekSaved
     }
 
     private var weekCounts: [Int] {
-        HomeActivityStats.calendarWeekWordCounts(days: activityDays)
+        stats.calendarWeekWordCounts
     }
 
     private var topApps: [HomeAppStat] {
-        Array(allApps.prefix(HomeActivityStats.homeTopAppCount))
+        Array(stats.allApps.prefix(HomeActivityStats.homeTopAppCount))
     }
 
     private var allApps: [HomeAppStat] {
-        HomeActivityStats.dictationApps(
-            preferCloud: cloudSignedIn,
-            cloudApps: coordinator.cloudStats.apps?.map {
-                (appName: $0.appName, bundleID: $0.bundleID, words: $0.words, audioSeconds: $0.audioSeconds)
-            },
-            localApps: coordinator.history.appStats,
-            history: coordinator.history.items.map {
-                (appName: $0.appName, bundleID: $0.bundleID, finalText: $0.finalText, audioDuration: $0.metrics.audioDuration)
-            },
-            averageWPM: averageWPM
-        )
+        stats.allApps
     }
 }
 

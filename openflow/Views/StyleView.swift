@@ -38,6 +38,9 @@ struct StyleView: View {
     static let emailContextCaption = "Mail or Gmail"
 
     @EnvironmentObject private var coordinator: DictationCoordinator
+    @EnvironmentObject private var credentials: CredentialStore
+    @EnvironmentObject private var cloudAccount: CloudAccountStore
+    @EnvironmentObject private var history: HistoryService
     @State private var query = ""
     @State private var styleName = ""
     @State private var stylePrompt = ""
@@ -56,7 +59,7 @@ struct StyleView: View {
     @State private var pendingDeletion: StylePendingDeletion?
     @State private var cachedAppChoices: [StyleAppChoice] = []
 
-    private var settings: UserSettings { coordinator.settings }
+    @EnvironmentObject private var settings: UserSettings
 
     private var isAddingStyle: Bool {
         isComposing && editingID == nil
@@ -893,11 +896,22 @@ struct StyleView: View {
     }
 
     private func beginOverrideAdd() {
-        cachedAppChoices = collectAvailableAppChoices()
         isAddingOverride = true
         selectedAppID = ""
         appSearch = ""
         selectedAppStyle = .preset(.auto)
+        // NSWorkspace running-app scan, bundle URL lookups, and file-system
+        // probes run off-main; history items are captured first because they
+        // are main-actor state.
+        let historyApps = coordinator.history.items.map {
+            (appName: $0.appName, bundleID: $0.bundleID)
+        }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let choices = Self.collectAvailableAppChoices(historyApps: historyApps)
+            await MainActor.run {
+                self?.cachedAppChoices = choices
+            }
+        }
     }
 
     private func cancelOverrideComposer() {
@@ -919,7 +933,9 @@ struct StyleView: View {
         cancelOverrideComposer()
     }
 
-    private func collectAvailableAppChoices() -> [StyleAppChoice] {
+    private nonisolated static func collectAvailableAppChoices(
+        historyApps: [(appName: String, bundleID: String?)]
+    ) -> [StyleAppChoice] {
         var choices: [StyleAppChoice] = []
         var indexByBundle = [String: Int]()
         var indexByName = [String: Int]()
@@ -952,7 +968,7 @@ struct StyleView: View {
             }
         }
 
-        for item in coordinator.history.items {
+        for item in historyApps {
             add(item.appName, item.bundleID)
         }
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
@@ -967,7 +983,7 @@ struct StyleView: View {
         return choices.sorted { $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending }
     }
 
-    private func normalizedAppName(_ value: String) -> String {
+    private nonisolated static func normalizedAppName(_ value: String) -> String {
         let normalized = value.lowercased()
             .replacingOccurrences(of: "adobe pho...", with: "adobe photoshop")
             .replacingOccurrences(of: "google chrome", with: "chrome")
@@ -982,7 +998,7 @@ struct StyleView: View {
         return normalized
     }
 
-    private func bestChoice(existing: StyleAppChoice, candidate: StyleAppChoice) -> StyleAppChoice {
+    private nonisolated static func bestChoice(existing: StyleAppChoice, candidate: StyleAppChoice) -> StyleAppChoice {
         if existing.bundleID.isEmpty && !candidate.bundleID.isEmpty { return candidate }
         if existing.installedPath == nil && candidate.installedPath != nil { return candidate }
         if existing.appName.contains("...") && !candidate.appName.contains("...") { return candidate }

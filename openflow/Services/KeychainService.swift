@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import Combine
 
 final class KeychainService {
     static let shared = KeychainService()
@@ -216,5 +217,37 @@ struct GroqAPIKeyValidator {
         default:
             throw GroqAPIKeyValidationError.unexpectedResponse
         }
+    }
+}
+
+/// Cached presence flags for credentials. Keychain SecItem calls are kept out
+/// of view bodies and off the per-render path: flags are refreshed once at
+/// launch and updated on every save, delete, sign-in, sign-out, or remote
+/// revocation. Reads are in-memory only.
+@MainActor
+final class CredentialStore: ObservableObject {
+    @Published private(set) var hasGroqKey = false
+    @Published private(set) var hasCloudSessionToken = false
+
+    var hasConfiguredProvider: Bool {
+        hasGroqKey || hasCloudSessionToken
+    }
+
+    /// Re-reads the keychain once. Call only from event-driven paths (launch,
+    /// sign-in/out, revocation handling) - never from a view body.
+    func refresh() {
+        let keychain = KeychainService.shared
+        let groq = ((try? keychain.apiKey()) ?? nil)?.isEmpty == false
+        let cloud = ((try? keychain.cloudSessionToken()) ?? nil)?.isEmpty == false
+        if groq != hasGroqKey { hasGroqKey = groq }
+        if cloud != hasCloudSessionToken { hasCloudSessionToken = cloud }
+    }
+
+    func setGroqKeyPresent(_ present: Bool) {
+        if present != hasGroqKey { hasGroqKey = present }
+    }
+
+    func setCloudSessionPresent(_ present: Bool) {
+        if present != hasCloudSessionToken { hasCloudSessionToken = present }
     }
 }

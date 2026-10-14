@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AppsView: View {
     @EnvironmentObject private var coordinator: DictationCoordinator
+    @EnvironmentObject private var homeStats: HomeStatsStore
     let cloudSignedIn: Bool
     let onBackToHome: () -> Void
 
@@ -53,28 +54,15 @@ struct AppsView: View {
             .background(FlowUI.controlFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
+    /// Reads the shared off-main snapshot. The store's builder keeps the same
+    /// merge semantics this list used to compute inline: cloud apps preferred
+    /// when signed in, with `localApps: coordinator.history.appStats`-equivalent
+    /// persisted data always feeding the merge.
     private var apps: [HomeAppStat] {
-        HomeActivityStats.dictationApps(
-            preferCloud: cloudSignedIn,
-            cloudApps: coordinator.cloudStats.apps?.map {
-                (appName: $0.appName, bundleID: $0.bundleID, words: $0.words, audioSeconds: $0.audioSeconds)
-            },
-            localApps: coordinator.history.appStats,
-            history: coordinator.history.items.map {
-                (appName: $0.appName, bundleID: $0.bundleID, finalText: $0.finalText, audioDuration: $0.metrics.audioDuration)
-            },
-            averageWPM: averageWPM
-        )
+        homeStats.snapshot.allApps
     }
 
     private var averageWPM: Int {
-        if cloudSignedIn {
-            let cloud = coordinator.cloudStats.lifetimeAverageWPM
-            if cloud > 0 { return cloud }
-        }
-        return HomeActivityStats.averageWPM(
-            words: coordinator.history.lifetimeWords,
-            audioSeconds: coordinator.history.lifetimeAudioSeconds
-        )
+        homeStats.snapshot.averageWPM
     }
 }

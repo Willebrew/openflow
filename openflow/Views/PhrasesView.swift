@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PhrasesView: View {
     @EnvironmentObject private var coordinator: DictationCoordinator
+    @EnvironmentObject private var settings: UserSettings
     @State private var trigger = ""
     @State private var expansion = ""
     @State private var query = ""

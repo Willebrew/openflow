@@ -26,6 +26,16 @@ final class HistoryService: ObservableObject {
     private var lifetime = LifetimeTotals(words: 0, audioSeconds: 0, dictations: 0)
     private var lifetimeApps: [String: LifetimeAppTotal] = [:]
 
+    /// Persistence is debounced onto a background queue: JSON-encoding 300
+    /// items (~384KB) synchronously on main for every change stalls the UI
+    /// during processing. Value snapshots are captured on the main actor at
+    /// schedule time; the latest write always wins.
+    private let persistQueue = DispatchQueue(label: "openflow.history-persist", qos: .utility)
+    private var pendingHistoryWrite: DispatchWorkItem?
+    private var pendingLifetimeWrite: DispatchWorkItem?
+    private var pendingAppsWrite: DispatchWorkItem?
+    private static let persistDebounce: TimeInterval = 0.3
+
     init(url: URL? = nil) {
         if let url {
             self.url = url
@@ -146,13 +156,27 @@ final class HistoryService: ObservableObject {
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(items) else { return }
-        try? data.write(to: url, options: .atomic)
+        let snapshot = items
+        let target = url
+        pendingHistoryWrite?.cancel()
+        let work = DispatchWorkItem {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: target, options: .atomic)
+        }
+        pendingHistoryWrite = work
+        persistQueue.asyncAfter(deadline: .now() + Self.persistDebounce, execute: work)
     }
 
     private func saveLifetime() {
-        guard let data = try? JSONEncoder().encode(lifetime) else { return }
-        try? data.write(to: lifetimeURL, options: .atomic)
+        let snapshot = lifetime
+        let target = lifetimeURL
+        pendingLifetimeWrite?.cancel()
+        let work = DispatchWorkItem {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: target, options: .atomic)
+        }
+        pendingLifetimeWrite = work
+        persistQueue.asyncAfter(deadline: .now() + Self.persistDebounce, execute: work)
     }
 
     private func recordAppUsage(appName: String, bundleID: String?, words: Int, audioSeconds: Double) {
@@ -214,8 +238,27 @@ final class HistoryService: ObservableObject {
     }
 
     private func saveApps() {
-        guard let data = try? JSONEncoder().encode(lifetimeApps) else { return }
-        try? data.write(to: appsURL, options: .atomic)
+        let snapshot = lifetimeApps
+        let target = appsURL
+        pendingAppsWrite?.cancel()
+        let work = DispatchWorkItem {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: target, options: .atomic)
+        }
+        pendingAppsWrite = work
+        persistQueue.asyncAfter(deadline: .now() + Self.persistDebounce, execute: work)
+    }
+
+    /// Runs any queued writes now. Called on app termination so the debounce
+    /// window cannot drop the last dictation's history.
+    func flushPendingWrites() {
+        for work in [pendingHistoryWrite, pendingLifetimeWrite, pendingAppsWrite] {
+            work?.cancel()
+            work?.perform()
+        }
+        pendingHistoryWrite = nil
+        pendingLifetimeWrite = nil
+        pendingAppsWrite = nil
     }
 
     private func publishAppStats() {

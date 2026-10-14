@@ -6,16 +6,19 @@ import SwiftUI
 
 @MainActor
 final class DictationCoordinator: ObservableObject {
-    @Published var pillViewModel = FloatingPillViewModel()
-    @Published var settings = UserSettings()
-    @Published var permissions = PermissionsService()
-    @Published var history = HistoryService()
-    @Published var debugLog: [String] = []
-    @Published var currentMetrics = LatencyMetrics()
-    @Published var cloudStats = OpenFlowCloudStats()
-    @Published var cloudTier: String?
-    @Published var cloudSessionNotice: String?
-    @Published var inputRouteStatus = MicrophoneRouteStatus.unknown
+    /// Views do not observe the coordinator itself. They observe the focused
+    /// stores below, so a publish only re-renders the pages that display that
+    /// state. The coordinator stays an ObservableObject purely so it can keep
+    /// flowing through the environment as the shared service locator.
+    let pillViewModel = FloatingPillViewModel()
+    let settings = UserSettings()
+    let permissions = PermissionsService()
+    let history = HistoryService()
+    let credentials = CredentialStore()
+    let cloudAccount = CloudAccountStore()
+    let audioRoute = AudioRouteStore()
+    let diagnostics = DiagnosticsStore()
+    let homeStats = HomeStatsStore()
 
     private let audio = AudioCaptureService()
     private let hotkeys = HotkeyService()
@@ -49,7 +52,7 @@ final class DictationCoordinator: ObservableObject {
 
     init() {
         audio.$inputLevel.assign(to: &pillViewModel.$level)
-        audio.$inputRouteStatus.assign(to: &$inputRouteStatus)
+        audio.$inputRouteStatus.assign(to: &audioRoute.$inputRouteStatus)
         audio.onAudioUnavailable = { [weak self] message in
             Task { @MainActor in
                 self?.handleAudioUnavailable(message)
@@ -62,16 +65,19 @@ final class DictationCoordinator: ObservableObject {
         }
         permissions.objectWillChange
             .sink { [weak self] _ in
-                self?.objectWillChange.send()
                 self?.applyPillVisibility()
             }
             .store(in: &cancellables)
-        history.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
-        settings.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
-            .store(in: &cancellables)
+        Publishers.MergeMany(
+            history.$items.map { _ in () }.eraseToAnyPublisher(),
+            history.$lifetimeWords.map { _ in () }.eraseToAnyPublisher(),
+            history.$lifetimeAudioSeconds.map { _ in () }.eraseToAnyPublisher(),
+            history.$appStats.map { _ in () }.eraseToAnyPublisher(),
+            cloudAccount.$stats.map { _ in () }.eraseToAnyPublisher(),
+            credentials.$hasCloudSessionToken.map { _ in () }.eraseToAnyPublisher()
+        )
+        .sink { [weak self] _ in self?.pushHomeStatsInputs() }
+        .store(in: &cancellables)
         settings.objectWillChange
             .debounce(for: .milliseconds(900), scheduler: RunLoop.main)
             .sink { [weak self] _ in
@@ -102,7 +108,7 @@ final class DictationCoordinator: ObservableObject {
         audio.$availableMicrophones
             .receive(on: DispatchQueue.main)
             .sink { [weak self] devices in
-                self?.objectWillChange.send()
+                self?.audioRoute.availableMicrophones = devices
                 self?.rematchSelectedMicrophone(devices)
             }
             .store(in: &cancellables)
@@ -143,6 +149,8 @@ final class DictationCoordinator: ObservableObject {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
+        credentials.refresh()
+        pushHomeStatsInputs(immediate: true)
         removeStaleAudioFiles()
         permissions.refresh()
         permissions.startPolling()
@@ -252,6 +260,7 @@ final class DictationCoordinator: ObservableObject {
         stopCloudSessionMonitoring()
         cancelRecordingLimit()
         audio.discard()
+        history.flushPendingWrites()
     }
 
     func validateCloudSessionAtLaunch() async {
@@ -278,9 +287,10 @@ final class DictationCoordinator: ObservableObject {
     func applyRemoteCloudRevocation() {
         let hadToken = ((try? KeychainService.shared.cloudSessionToken()) ?? nil)?.isEmpty == false
         cloudAuth.signOut()
-        cloudStats = OpenFlowCloudStats()
-        cloudTier = nil
-        cloudSessionNotice = CloudSessionValidator.revokedUserMessage
+        credentials.setCloudSessionPresent(false)
+        cloudAccount.stats = OpenFlowCloudStats()
+        cloudAccount.tier = nil
+        cloudAccount.sessionNotice = CloudSessionValidator.revokedUserMessage
         if hasAPIKey() {
             settings.providerMode = .localGroq
         }
@@ -332,9 +342,9 @@ final class DictationCoordinator: ObservableObject {
             AudioServicesPlaySystemSound(1104)
             transcription.warmUp(settings: settings)
             scheduleRecordingLimit(for: newSession.id)
-            if inputRouteStatus.isFallback {
-                pillViewModel.subtitle = "Using \(inputRouteStatus.activeName)"
-                log(inputRouteStatus.message ?? "selected microphone unavailable; using system default")
+            if audioRoute.inputRouteStatus.isFallback {
+                pillViewModel.subtitle = "Using \(audioRoute.inputRouteStatus.activeName)"
+                log(audioRoute.inputRouteStatus.message ?? "selected microphone unavailable; using system default")
             }
             log("recording started in \(ms(session?.metrics.hotkeyToRecordingStart ?? 0))")
             attachSessionContext(sessionID: newSession.id, frontmostApp: frontmostApp)
@@ -343,24 +353,34 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
+    /// The AX capture hops off the main thread so a slow frontmost app can
+    /// never stall hotkey handling; the session fields are committed back on
+    /// the main actor once the snapshot lands.
     private func attachSessionContext(sessionID: UUID, frontmostApp: NSRunningApplication?) {
         guard session?.id == sessionID else { return }
-        let contextSnapshot = context.captureSnapshot(settings: settings,
-                                                      activeApplication: frontmostApp,
-                                                      searchDescendants: false)
-        guard session?.id == sessionID else { return }
-        log("context route: app=\(contextSnapshot.context.activeAppName), category=\(contextSnapshot.context.category.rawValue), canInsert=\(contextSnapshot.canInsertText), fieldBefore=\(contextSnapshot.context.textBefore?.count ?? 0), fieldAfter=\(contextSnapshot.context.textAfter?.count ?? 0)")
-        session?.context = contextSnapshot.context
-        session?.focusedElement = contextSnapshot.element
-        session?.focusedWindow = contextSnapshot.focusedWindow
-        session?.targetProcessIdentifier = contextSnapshot.processIdentifier
-        session?.targetCanInsertText = contextSnapshot.canInsertText
-        session?.selectedRange = contextSnapshot.selectedRange
-        session?.metrics.activeApp = contextSnapshot.context.activeAppName
-        session?.metrics.category = contextSnapshot.context.category
-        session?.metrics.contextAvailable = true
-        startFocusProbe()
+        let contextService = context
+        let currentSettings = settings
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let contextSnapshot = contextService.captureSnapshot(settings: currentSettings,
+                                                                 activeApplication: frontmostApp,
+                                                                 searchDescendants: false)
+            await MainActor.run {
+                guard let self, self.session?.id == sessionID else { return }
+                self.log("context route: app=\(contextSnapshot.context.activeAppName), category=\(contextSnapshot.context.category.rawValue), canInsert=\(contextSnapshot.canInsertText), fieldBefore=\(contextSnapshot.context.textBefore?.count ?? 0), fieldAfter=\(contextSnapshot.context.textAfter?.count ?? 0))")
+                self.session?.context = contextSnapshot.context
+                self.session?.focusedElement = contextSnapshot.element
+                self.session?.focusedWindow = contextSnapshot.focusedWindow
+                self.session?.targetProcessIdentifier = contextSnapshot.processIdentifier
+                self.session?.targetCanInsertText = contextSnapshot.canInsertText
+                self.session?.selectedRange = contextSnapshot.selectedRange
+                self.session?.metrics.activeApp = contextSnapshot.context.activeAppName
+                self.session?.metrics.category = contextSnapshot.context.category
+                self.session?.metrics.contextAvailable = true
+                self.startFocusProbe()
+            }
+        }
     }
+
 
     /// Fires the strict text-input probe off the main thread. The AppKit
     /// first-responder read happens here (main thread, pure property access);
@@ -384,11 +404,13 @@ final class DictationCoordinator: ObservableObject {
 
     func refreshAccountState() {
         guard let baseURL = URL(string: settings.cloudBaseURL) else { return }
-        guard let token = try? KeychainService.shared.cloudSessionToken(), !token.isEmpty else {
-            cloudStats = OpenFlowCloudStats()
-            cloudTier = nil
+        guard credentials.hasCloudSessionToken else {
+            credentials.setCloudSessionPresent(false)
+            cloudAccount.stats = OpenFlowCloudStats()
+            cloudAccount.tier = nil
             return
         }
+        credentials.setCloudSessionPresent(true)
         Task {
             do {
                 async let preferences = cloud.preferences(baseURL: baseURL)
@@ -399,7 +421,7 @@ final class DictationCoordinator: ObservableObject {
                     stats,
                     entitlement
                 )
-                cloudTier = remoteEntitlement.tier
+                cloudAccount.tier = remoteEntitlement.tier
                 applyingCloudPreferences = true
                 if let remotePreferences {
                     settings.applyCloudSnapshot(remotePreferences)
@@ -414,6 +436,22 @@ final class DictationCoordinator: ObservableObject {
                 log("account sync unavailable: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Feeds the Home/Apps snapshot builder with fresh inputs; the store
+    /// debounces bursts and computes off the main thread.
+    private func pushHomeStatsInputs(immediate: Bool = false) {
+        homeStats.update(
+            input: HomeStatsInput(
+                preferCloud: credentials.hasCloudSessionToken,
+                items: history.items,
+                lifetimeWords: history.lifetimeWords,
+                lifetimeAudioSeconds: history.lifetimeAudioSeconds,
+                appStats: history.appStats,
+                cloudStats: cloudAccount.stats
+            ),
+            immediate: immediate
+        )
     }
 
     private func startCloudSessionMonitoring() {
@@ -490,21 +528,21 @@ final class DictationCoordinator: ObservableObject {
             return true
         }
         if case OpenflowError.cloudAuthenticationRequired = error {
-            cloudStats = OpenFlowCloudStats()
-            cloudTier = nil
+            cloudAccount.stats = OpenFlowCloudStats()
+            cloudAccount.tier = nil
             return true
         }
         return false
     }
 
     private func applyCloudStats(_ stats: OpenFlowCloudStats) {
-        cloudStats = cloudStats.mergingIncoming(stats)
+        cloudAccount.stats = cloudAccount.stats.mergingIncoming(stats)
         history.adoptLifetimeHighWater(
-            words: cloudStats.lifetimeWords,
-            audioSeconds: cloudStats.lifetimeAudioSeconds
+            words: cloudAccount.stats.lifetimeWords,
+            audioSeconds: cloudAccount.stats.lifetimeAudioSeconds
         )
         history.adoptAppHighWater(
-            (cloudStats.apps ?? []).map {
+            (cloudAccount.stats.apps ?? []).map {
                 HomeAppStat(
                     appName: $0.appName,
                     bundleID: $0.bundleID,
@@ -588,31 +626,61 @@ final class DictationCoordinator: ObservableObject {
         session = nil
         processingSessionID = activeSession.id
         hotkeys.markStopped()
+        OpenflowSignpost.beginDictationPipeline()
         activeSession.endedAt = Date()
         pillViewModel.state = .processing
         pillViewModel.subtitle = "Polishing"
 
         Task { [self] in
+            // Local refs captured on the main actor so the AX capture and the
+            // capture-session teardown can hop off the main thread.
+            let audio = self.audio
+            let contextService = self.context
+            let currentSettings = self.settings
             var transcribedResult: TranscriptionResult?
-            var formattingContext = activeSession.context ?? context.capture(settings: settings)
+            var formattingContext: FormattingContext
+            if let capturedContext = activeSession.context {
+                formattingContext = capturedContext
+            } else {
+                formattingContext = await Task.detached(priority: .userInitiated) {
+                    contextService.capture(settings: currentSettings)
+                }.value
+            }
             do {
                 let stopAt = Date()
+                // Capture teardown stays on the calling actor and is fast; the
+                // release chime must not play until capture has stopped. The
+                // upload re-encode runs detached because it is the expensive part.
                 let captured = try audio.stop()
                 AudioServicesPlaySystemSound(1105)
+                let prepared = try await Task.detached(priority: .userInitiated) {
+                    try audio.prepareForUpload(captured)
+                }.value
                 defer {
                     try? FileManager.default.removeItem(at: captured.url)
+                }
+                defer {
+                    if prepared.url != captured.url {
+                        try? FileManager.default.removeItem(at: prepared.url)
+                    }
                 }
                 activeSession.metrics.audioDuration = captured.duration
                 activeSession.metrics.encodingTime = Date().timeIntervalSince(stopAt)
                 log("audio gate passed: duration \(ms(captured.duration)), voiced \(ms(captured.voicedDuration)), peak \(String(format: "%.2f", captured.peakLevel)), avg \(String(format: "%.2f", captured.averageLevel))")
 
-                latencyTrace("encode \(ms(activeSession.metrics.encodingTime)) wav \(captured.url.lastPathComponent)")
-                formattingContext = activeSession.context ?? context.capture(settings: settings)
+                latencyTrace("encode \(ms(activeSession.metrics.encodingTime)) wav \(prepared.url.lastPathComponent)")
+                if let capturedContext = activeSession.context {
+                    formattingContext = capturedContext
+                } else {
+                    formattingContext = await Task.detached(priority: .userInitiated) {
+                        contextService.capture(settings: currentSettings)
+                    }.value
+                }
                 applyResolvedStyle(to: &formattingContext)
-                refreshFieldText(into: &formattingContext, session: activeSession)
+                await refreshFieldText(into: &formattingContext, session: activeSession)
                 let requestInlineCleanup = cleanup.styleRequiresRemoteCleanup(context: formattingContext)
                 let transcribed = try await transcription.transcribe(
-                    audioURL: captured.url,
+                    audioURL: prepared.url,
                     settings: settings,
                     needsCleanup: requestInlineCleanup,
                     cleanupContext: requestInlineCleanup
@@ -666,8 +734,9 @@ final class DictationCoordinator: ObservableObject {
                     DiagnosticsLog.shared.write(
                         "ignored empty dictation: reason=\(reason ?? "n/a") wall=\(wallMs) \(probeNote)")
                     log("ignored empty dictation: \(reason ?? "no voiced audio captured")")
+                    OpenflowSignpost.endDictationPipeline(outcome: "no-audio")
                     processingSessionID = nil
-                    currentMetrics = activeSession.metrics
+                    diagnostics.currentMetrics = activeSession.metrics
                     resetPillToIdle()
                     pillViewModel.subtitle = "Ready"
                     applyPillVisibility()
@@ -743,7 +812,7 @@ final class DictationCoordinator: ObservableObject {
         metrics.insertionFailureReason = result.completed ? nil : result.summary
         metrics.provider = result.provider
         metrics.model = result.model
-        currentMetrics = metrics
+        diagnostics.currentMetrics = metrics
         log("voice agent finished: completed=\(result.completed), steps=\(result.steps), \(result.summary)")
         DiagnosticsLog.shared.write(
             "voice agent finished: completed=\(result.completed) steps=\(result.steps) \(result.summary)")
@@ -757,6 +826,7 @@ final class DictationCoordinator: ObservableObject {
                                                agentSummary: result.summary)
             return
         }
+        OpenflowSignpost.endDictationPipeline(outcome: "voice-agent")
         _ = await refreshCloudStatsIfSignedIn()
         guard processingSessionID == session.id else { return }
         pillViewModel.state = .success
@@ -845,7 +915,9 @@ final class DictationCoordinator: ObservableObject {
         }
 
         let insertionStarted = Date()
-        let insertionSnapshot = context.captureSnapshot(settings: settings)
+        let insertionSnapshot = await Task.detached(priority: .userInitiated) {
+            contextService.captureSnapshot(settings: currentSettings)
+        }.value
         if let originalPID = activeSession.targetProcessIdentifier,
            insertionSnapshot.processIdentifier != originalPID {
             let raceDescription = "started pid \(originalPID), current pid \(insertionSnapshot.processIdentifier.map(String.init) ?? "none")"
@@ -904,7 +976,8 @@ final class DictationCoordinator: ObservableObject {
         } else {
             log("inserted via \(insertionResult.method.rawValue), verified \(insertionResult.verified), attempts \(insertionResult.attemptCount)")
         }
-        currentMetrics = activeSession.metrics
+        OpenflowSignpost.endDictationPipeline(outcome: succeeded ? "inserted" : "insert-failed")
+        diagnostics.currentMetrics = activeSession.metrics
 
         history.add(DictationHistoryItem(timestamp: Date(),
                                          finalText: finalText,
@@ -987,33 +1060,56 @@ final class DictationCoordinator: ObservableObject {
         try KeychainService.shared.saveAPIKey(trimmedKey)
         guard try KeychainService.shared.apiKey() == trimmedKey else {
             KeychainService.shared.deleteAPIKey()
+            credentials.setGroqKeyPresent(false)
             throw KeychainError.persistenceVerificationFailed
         }
+        credentials.setGroqKeyPresent(true)
         log("saved and verified Groq API key in Keychain")
         settings.providerMode = .localGroq
         applyPillVisibility()
     }
 
+    /// Cached credential presence: refreshed at launch and kept current on
+    /// every save/delete/sign-in/sign-out. Safe to call from view bodies.
     func hasAPIKey() -> Bool {
-        ((try? KeychainService.shared.apiKey()) ?? nil)?.isEmpty == false
+        credentials.hasGroqKey
+    }
+
+    /// Deletes the stored Groq key and updates the cached presence flag.
+    func deleteAPIKey() {
+        KeychainService.shared.deleteAPIKey()
+        credentials.setGroqKeyPresent(false)
+        noteSetupReadinessChanged()
     }
 
     func canGenerateStyleWithOpenflow() -> Bool {
         OpenFlowProviderRouting.canGenerateStyleWithOpenflow(
             hasLocalGroqKey: hasAPIKey(),
-            cloudTier: cloudTier
+            cloudTier: cloudAccount.tier
         )
     }
 
-    func refreshCloudEntitlement() async {
+    /// Entitlement fetches hit the network, so callers (window open, tab
+    /// visit, app activation) are throttled to one attempt per interval.
+    private var lastEntitlementRefreshAt: Date?
+    private static let entitlementRefreshInterval: TimeInterval = 300
+
+    func refreshCloudEntitlement(force: Bool = false) async {
+        if !force,
+           let last = lastEntitlementRefreshAt,
+           Date().timeIntervalSince(last) < Self.entitlementRefreshInterval {
+            return
+        }
         guard let baseURL = URL(string: settings.cloudBaseURL),
               let token = try? KeychainService.shared.cloudSessionToken(),
               !token.isEmpty else {
-            cloudTier = nil
+            cloudAccount.tier = nil
             return
         }
+        lastEntitlementRefreshAt = Date()
         do {
-            cloudTier = try await cloud.entitlement(baseURL: baseURL).tier
+            cloudAccount.tier = try await cloud.entitlement(baseURL: baseURL).tier
+            credentials.setCloudSessionPresent(true)
         } catch {
             if await consumeCloudSessionError(error) { return }
             log("entitlement refresh unavailable: \(error.localizedDescription)")
@@ -1021,9 +1117,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     func hasConfiguredProvider() -> Bool {
-        if hasAPIKey() { return true }
-        guard let token = try? KeychainService.shared.cloudSessionToken() else { return false }
-        return !token.isEmpty
+        credentials.hasConfiguredProvider
     }
 
     func noteSetupReadinessChanged() {
@@ -1051,12 +1145,16 @@ final class DictationCoordinator: ObservableObject {
                                          bundleID: context.bundleID)
     }
 
-    private func refreshFieldText(into formattingContext: inout FormattingContext, session: DictationSession) {
+    private func refreshFieldText(into formattingContext: inout FormattingContext, session: DictationSession) async {
         let app = session.targetProcessIdentifier.flatMap { NSRunningApplication(processIdentifier: $0) }
-        let snapshot = context.captureSnapshot(settings: settings,
-                                              activeApplication: app,
-                                              searchDescendants: false)
-        context.mergeFieldText(from: snapshot, into: &formattingContext)
+        let contextService = context
+        let currentSettings = settings
+        let snapshot = await Task.detached(priority: .userInitiated) {
+            contextService.captureSnapshot(settings: currentSettings,
+                                           activeApplication: app,
+                                           searchDescendants: false)
+        }.value
+        contextService.mergeFieldText(from: snapshot, into: &formattingContext)
         log("field context: before=\(formattingContext.textBefore?.count ?? 0) after=\(formattingContext.textAfter?.count ?? 0) nearby=\(formattingContext.nearbyText?.count ?? 0)")
     }
 
@@ -1088,6 +1186,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func showError(_ error: Error, sessionID: UUID? = nil) {
+        OpenflowSignpost.endDictationPipeline(outcome: "error")
         log("error: \(error.localizedDescription)")
         DiagnosticsLog.shared.write("error shown: \(String(describing: error))")
         cancelRecordingLimit()
@@ -1121,7 +1220,7 @@ final class DictationCoordinator: ObservableObject {
             failedSession.metrics.model = transcript.model
             failedSession.metrics.uploadAndTranscriptionTime = transcript.requestTime
         }
-        currentMetrics = failedSession.metrics
+        diagnostics.currentMetrics = failedSession.metrics
 
         let text = transcript?.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let visibleText: String
@@ -1269,8 +1368,8 @@ final class DictationCoordinator: ObservableObject {
         DiagnosticsLog.shared.write(message)
         guard settings.debugLogsEnabled else { return }
         let line = "\(Date().formatted(date: .omitted, time: .standard))  \(message)"
-        debugLog.insert(line, at: 0)
-        debugLog = Array(debugLog.prefix(200))
+        diagnostics.entries.insert(line, at: 0)
+        diagnostics.entries = Array(diagnostics.entries.prefix(200))
     }
 
     /// Always prints to Console so a latency breakdown is visible without turning on debug logs.

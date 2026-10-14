@@ -208,15 +208,26 @@ nonisolated final class AudioCaptureService: NSObject, ObservableObject, AVCaptu
                     state.voicedDuration, minimumVoicedDuration,
                     averageLevel))
         }
+        return CapturedAudio(url: outputURL,
+                             duration: duration,
+                             voicedDuration: state.voicedDuration,
+                             peakLevel: state.maxInputLevel,
+                             averageLevel: averageLevel)
+    }
+
+    /// Resamples the raw capture to the upload format and applies the byte
+    /// ceiling. This is the expensive encode step; call it off the main
+    /// thread after the capture teardown in `stop()` has finished.
+    func prepareForUpload(_ captured: CapturedAudio) throws -> CapturedAudio {
         var uploadURL: URL
         do {
-            uploadURL = try makeUploadAudio(from: outputURL)
+            uploadURL = try makeUploadAudio(from: captured.url)
         } catch {
-            removeCapturedFile(at: outputURL)
+            removeCapturedFile(at: captured.url)
             throw error
         }
-        if uploadURL != outputURL {
-            removeCapturedFile(at: outputURL)
+        if uploadURL != captured.url {
+            removeCapturedFile(at: captured.url)
         }
         if uploadByteCount(of: uploadURL) > maxUploadWAVBytes {
             do {
@@ -228,11 +239,9 @@ nonisolated final class AudioCaptureService: NSObject, ObservableObject, AVCaptu
                 throw error
             }
         }
-        return CapturedAudio(url: uploadURL,
-                             duration: duration,
-                             voicedDuration: state.voicedDuration,
-                             peakLevel: state.maxInputLevel,
-                             averageLevel: averageLevel)
+        var prepared = captured
+        prepared.url = uploadURL
+        return prepared
     }
 
     private func uploadByteCount(of url: URL) -> Int {
@@ -943,4 +952,13 @@ struct CapturedAudio {
     var voicedDuration: TimeInterval
     var peakLevel: Float
     var averageLevel: Float
+}
+
+/// Microphone route state the Settings input picker observes (available input
+/// devices plus the current route status). Kept on its own store so device
+/// churn never invalidates pages that do not show the picker.
+@MainActor
+final class AudioRouteStore: ObservableObject {
+    @Published var inputRouteStatus = MicrophoneRouteStatus.unknown
+    @Published var availableMicrophones: [AudioInputDevice] = []
 }

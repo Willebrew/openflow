@@ -1,6 +1,5 @@
 import AppKit
 
-@MainActor
 final class ContextService {
     struct FocusedSnapshot {
         var context: FormattingContext

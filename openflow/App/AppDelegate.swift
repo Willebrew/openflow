@@ -64,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hasExistingUserEvidence: Bool {
         if !coordinator.history.items.isEmpty { return true }
         if coordinator.hasAPIKey() { return true }
-        if let token = try? KeychainService.shared.cloudSessionToken(), !token.isEmpty { return true }
+        if coordinator.credentials.hasCloudSessionToken { return true }
         return false
     }
 
