@@ -60,7 +60,11 @@ final class HistoryService: ObservableObject {
         if !settings.storeRawTranscript { stored.rawTranscript = nil }
         items.insert(stored, at: 0)
         items = Array(items.prefix(300))
-        save()
+        // A new dictation is persisted before add returns (matching the old
+        // synchronous save contract); the encode+write still happens on the
+        // utility queue, just without the debounce delay.
+        save(immediate: true)
+        persistQueue.sync { }
     }
 
     func delete(_ item: DictationHistoryItem) {
@@ -155,7 +159,7 @@ final class HistoryService: ObservableObject {
         publishAppStats()
     }
 
-    private func save() {
+    private func save(immediate: Bool = false) {
         let snapshot = items
         let target = url
         pendingHistoryWrite?.cancel()
@@ -164,7 +168,11 @@ final class HistoryService: ObservableObject {
             try? data.write(to: target, options: .atomic)
         }
         pendingHistoryWrite = work
-        persistQueue.asyncAfter(deadline: .now() + Self.persistDebounce, execute: work)
+        if immediate {
+            persistQueue.async(execute: work)
+        } else {
+            persistQueue.asyncAfter(deadline: .now() + Self.persistDebounce, execute: work)
+        }
     }
 
     private func saveLifetime() {
@@ -259,6 +267,7 @@ final class HistoryService: ObservableObject {
         pendingHistoryWrite = nil
         pendingLifetimeWrite = nil
         pendingAppsWrite = nil
+        persistQueue.sync { }
     }
 
     private func publishAppStats() {
