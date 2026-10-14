@@ -3,7 +3,7 @@ import SwiftUI
 struct OnboardingFlowView: View {
     @EnvironmentObject private var coordinator: DictationCoordinator
     @EnvironmentObject private var settings: UserSettings
-    @EnvironmentObject private var permissions: PermissionsService
+    @EnvironmentObject private var permissionsStore: PermissionsService
     @EnvironmentObject private var credentials: CredentialStore
     @EnvironmentObject private var cloudAccount: CloudAccountStore
     @State private var step: OnboardingStep = .welcome

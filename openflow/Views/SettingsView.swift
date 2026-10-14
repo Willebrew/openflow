@@ -746,17 +746,17 @@ struct SettingsView: View {
         switch tab {
         case .general:
             settingsCard("General") {
-                settingsToggleRow("History", "Save final dictations locally.", isOn: $coordinator.settings.historyEnabled)
+                settingsToggleRow("History", "Save final dictations locally.", isOn: $settings.historyEnabled)
                 permissionDivider
-                settingsToggleRow("Context awareness", "Use the focused app for spacing and tone. When off, nearby field text stays on this Mac and is not sent for cleanup.", isOn: $coordinator.settings.contextAwarenessEnabled)
+                settingsToggleRow("Context awareness", "Use the focused app for spacing and tone. When off, nearby field text stays on this Mac and is not sent for cleanup.", isOn: $settings.contextAwarenessEnabled)
                 permissionDivider
-                settingsToggleRow("Browser detection", "Read supported browser URLs when available.", isOn: $coordinator.settings.browserURLDetectionEnabled)
+                settingsToggleRow("Browser detection", "Read supported browser URLs when available.", isOn: $settings.browserURLDetectionEnabled)
                 permissionDivider
-                settingsToggleRow("Spoken press enter", "When on, a trailing press enter, hit enter, or press return sends Return and those words are removed. When off, the words stay in the document.", isOn: $coordinator.settings.pressEnterCommandEnabled)
+                settingsToggleRow("Spoken press enter", "When on, a trailing press enter, hit enter, or press return sends Return and those words are removed. When off, the words stay in the document.", isOn: $settings.pressEnterCommandEnabled)
                 permissionDivider
-                settingsToggleRow("Voice agent", "Dictate outside a text field and openflow asks Jev to act on your Mac instead of typing.", isOn: $coordinator.settings.voiceAgentEnabled)
+                settingsToggleRow("Voice agent", "Dictate outside a text field and openflow asks Jev to act on your Mac instead of typing.", isOn: $settings.voiceAgentEnabled)
                 permissionDivider
-                settingsToggleRow("Hide inactive pill", "Only show the floating UI while recording, processing, or reporting a result.", isOn: $coordinator.settings.hideInactivePill)
+                settingsToggleRow("Hide inactive pill", "Only show the floating UI while recording, processing, or reporting a result.", isOn: $settings.hideInactivePill)
                     .onChange(of: coordinator.settings.hideInactivePill) { _, _ in
                         coordinator.refreshPillVisibility()
                     }
@@ -769,9 +769,9 @@ struct SettingsView: View {
             subscriptionDetail
         case .shortcuts:
             settingsCard("Shortcuts") {
-                shortcutPickerRow("Push-to-talk", "Hold this shortcut to dictate into the active field.", selection: $coordinator.settings.pushToTalkHotkey)
+                shortcutPickerRow("Push-to-talk", "Hold this shortcut to dictate into the active field.", selection: $settings.pushToTalkHotkey)
                 permissionDivider
-                shortcutPickerRow("Toggle dictation", "Press once to start, press again to stop.", selection: $coordinator.settings.toggleHotkey)
+                shortcutPickerRow("Toggle dictation", "Press once to start, press again to stop.", selection: $settings.toggleHotkey)
             }
         case .updates:
             settingsCard("Software updates") {
@@ -1092,7 +1092,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 18)
-                FlowMenuPicker(selection: $coordinator.settings.microphoneDeviceID,
+                FlowMenuPicker(selection: $settings.microphoneDeviceID,
                                options: microphonePickerOptions,
                                title: microphoneTitle,
                                width: 220)

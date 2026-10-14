@@ -187,7 +187,7 @@ struct StyleView: View {
                                 title: "Personal",
                                 caption: Self.personalContextCaption,
                                 symbol: "person",
-                                selection: $coordinator.settings.stylePreferences.personalMessages
+                                selection: $settings.stylePreferences.personalMessages
                             )
                         }
                         if showsContext(title: "Work", caption: Self.workContextCaption) {
@@ -195,7 +195,7 @@ struct StyleView: View {
                                 title: "Work",
                                 caption: Self.workContextCaption,
                                 symbol: "briefcase",
-                                selection: $coordinator.settings.stylePreferences.workMessages
+                                selection: $settings.stylePreferences.workMessages
                             )
                         }
                         if showsContext(title: "Email", caption: Self.emailContextCaption) {
@@ -203,7 +203,7 @@ struct StyleView: View {
                                 title: "Email",
                                 caption: Self.emailContextCaption,
                                 symbol: "envelope",
-                                selection: $coordinator.settings.stylePreferences.email
+                                selection: $settings.stylePreferences.email
                             )
                         }
                     }
@@ -329,7 +329,7 @@ struct StyleView: View {
                     .foregroundStyle(.secondary)
                 FlowInlineField(
                     placeholder: "Your name",
-                    text: $coordinator.settings.stylePreferences.emailSignOffName,
+                    text: $settings.stylePreferences.emailSignOffName,
                     fontSize: 12,
                     weight: .medium
                 )
@@ -906,10 +906,10 @@ struct StyleView: View {
         let historyApps = coordinator.history.items.map {
             (appName: $0.appName, bundleID: $0.bundleID)
         }
-        Task.detached(priority: .userInitiated) { [weak self] in
+        Task.detached(priority: .userInitiated) {
             let choices = Self.collectAvailableAppChoices(historyApps: historyApps)
             await MainActor.run {
-                self?.cachedAppChoices = choices
+                self.cachedAppChoices = choices
             }
         }
     }
