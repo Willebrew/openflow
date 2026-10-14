@@ -1,5 +1,6 @@
 import AppKit
 import AudioToolbox
+import AVFAudio
 import Combine
 import os
 import SwiftUI
@@ -160,6 +161,7 @@ final class DictationCoordinator: ObservableObject {
         applyPillVisibility()
         restartHotkeys()
         startCloudSessionMonitoring()
+        runDictationInjectionIfRequested()
         sessionLaunchCheck = Task { [weak self] in
             await self?.validateStoredCloudSession()
             self?.refreshAccountState()
@@ -449,7 +451,7 @@ final class DictationCoordinator: ObservableObject {
                 lifetimeWords: history.lifetimeWords,
                 lifetimeAudioSeconds: history.lifetimeAudioSeconds,
                 appStats: history.appStats,
-                cloudStats: cloudAccount.stats
+                cloudStats: cloudAccount.stats ?? OpenFlowCloudStats()
             ),
             immediate: immediate
         )
@@ -537,13 +539,14 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func applyCloudStats(_ stats: OpenFlowCloudStats) {
-        cloudAccount.stats = cloudAccount.stats.mergingIncoming(stats)
+        let merged = (cloudAccount.stats ?? OpenFlowCloudStats()).mergingIncoming(stats)
+        cloudAccount.stats = merged
         history.adoptLifetimeHighWater(
-            words: cloudAccount.stats.lifetimeWords,
-            audioSeconds: cloudAccount.stats.lifetimeAudioSeconds
+            words: merged.lifetimeWords,
+            audioSeconds: merged.lifetimeAudioSeconds
         )
         history.adoptAppHighWater(
-            (cloudAccount.stats.apps ?? []).map {
+            (merged.apps ?? []).map {
                 HomeAppStat(
                     appName: $0.appName,
                     bundleID: $0.bundleID,
@@ -1387,6 +1390,113 @@ final class DictationCoordinator: ObservableObject {
 
     private func ms(_ interval: TimeInterval) -> String {
         "\(Int(interval * 1000))ms"
+    }
+
+    // MARK: - Mic-free dictation injection (launch-arg test hook)
+
+    /// Feeds canned input through the real processing and insertion path so
+    /// main-thread stalls can be measured without a microphone. Launch args:
+    ///   openflow --openflow-inject-text="hello world"
+    ///   openflow --openflow-inject-wav=/absolute/path/to.wav
+    /// Both run once at start(): context capture, cleanup, insertion, and the
+    /// stop->insert signpost/log timings are identical to a live dictation.
+    private func runDictationInjectionIfRequested() {
+        let args = ProcessInfo.processInfo.arguments
+        let wavPath = Self.launchArgumentValue("--openflow-inject-wav", in: args)
+        let text = Self.launchArgumentValue("--openflow-inject-text", in: args)
+        guard wavPath != nil || text != nil else { return }
+        DiagnosticsLog.shared.write(
+            "inject-dictation hook active (wav: \(wavPath != nil), text: \(text != nil))")
+        Task { [self] in
+            do {
+                try await injectDictation(wavPath: wavPath, text: text)
+            } catch {
+                log("inject-dictation failed: \(error.localizedDescription)")
+                OpenflowSignpost.endDictationPipeline(outcome: "error")
+            }
+        }
+    }
+
+    private static func launchArgumentValue(_ flag: String, in args: [String]) -> String? {
+        for (index, arg) in args.enumerated() {
+            if arg == flag, index + 1 < args.count { return args[index + 1] }
+            if arg.hasPrefix(flag + "=") { return String(arg.dropFirst(flag.count + 1)) }
+        }
+        return nil
+    }
+
+    private func injectDictation(wavPath: String?, text: String?) async throws {
+        var activeSession = DictationSession(mode: .dictation)
+        OpenflowSignpost.beginDictationPipeline()
+        log("inject-dictation started")
+
+        let contextInput = ContextCaptureInput(settings: settings)
+        var formattingContext = await Task.detached(priority: .userInitiated) { [context] in
+            context.capture(input: contextInput)
+        }.value
+        applyResolvedStyle(to: &formattingContext)
+        await refreshFieldText(into: &formattingContext, session: activeSession)
+
+        let captured: CapturedAudio
+        let prepared: CapturedAudio
+        var transcribed: TranscriptionResult
+        if let wavPath {
+            let source = URL(fileURLWithPath: wavPath)
+            guard FileManager.default.fileExists(atPath: source.path) else {
+                throw OpenflowError.noAudioCaptured(reason: "inject-wav file missing: \(wavPath)")
+            }
+            captured = CapturedAudio(url: source,
+                                     duration: Self.audioFileDuration(source),
+                                     voicedDuration: 0,
+                                     peakLevel: 0,
+                                     averageLevel: 0)
+            // prepareForUpload may rewrite to an upload copy; the caller-owned
+            // source file is never removed.
+            prepared = try await Task.detached(priority: .utility) { [audio] in
+                try audio.prepareForUpload(captured)
+            }.value
+            defer {
+                if prepared.url != captured.url {
+                    try? FileManager.default.removeItem(at: prepared.url)
+                }
+            }
+            let requestInlineCleanup = cleanup.styleRequiresRemoteCleanup(context: formattingContext)
+            transcribed = try await transcription.transcribe(
+                audioURL: prepared.url,
+                settings: settings,
+                needsCleanup: requestInlineCleanup,
+                cleanupContext: requestInlineCleanup
+                    ? cloud.encodeCleanupContext(context: formattingContext, settings: settings)
+                    : nil,
+                appName: formattingContext.activeAppName,
+                bundleID: formattingContext.bundleID)
+        } else {
+            // Text injection skips the upload entirely and lands straight in
+            // cleanup + insertion, which are the main-thread-sensitive stages.
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("openflow-inject-\(UUID().uuidString).wav")
+            FileManager.default.createFile(atPath: tempURL.path, contents: Data())
+            defer { try? FileManager.default.removeItem(at: tempURL) }
+            captured = CapturedAudio(url: tempURL, duration: 0,
+                                     voicedDuration: 0, peakLevel: 0, averageLevel: 0)
+            prepared = captured
+            transcribed = TranscriptionResult(text: text ?? "",
+                                              model: "inject-text",
+                                              provider: "inject-text",
+                                              requestTime: 0)
+        }
+        activeSession.metrics.audioDuration = captured.duration
+        try await finishInsertion(transcribed: transcribed,
+                                  session: activeSession,
+                                  formattingContext: formattingContext,
+                                  captured: prepared)
+        log("inject-dictation finished")
+    }
+
+    private static func audioFileDuration(_ url: URL) -> TimeInterval {
+        guard let file = try? AVAudioFile(forReading: url) else { return 0 }
+        let rate = file.processingFormat.sampleRate
+        return rate > 0 ? Double(file.length) / rate : 0
     }
 }
 
