@@ -41,6 +41,11 @@ private enum CloudBillingAction {
 
 struct SettingsView: View {
     @EnvironmentObject private var coordinator: DictationCoordinator
+    @EnvironmentObject private var settings: UserSettings
+    @EnvironmentObject private var permissions: PermissionsService
+    @EnvironmentObject private var credentials: CredentialStore
+    @EnvironmentObject private var cloudAccount: CloudAccountStore
+    @EnvironmentObject private var audioRoute: AudioRouteStore
     @ObservedObject private var updater = UpdateService.shared
     @State private var selectedTab: SettingsTab
     @State private var settingsTab: SettingsDetailTab = .general
@@ -55,16 +60,24 @@ struct SettingsView: View {
     @State private var groqKeyStatus: String?
     @State private var cloudAuthInFlight = false
     @State private var cloudBillingInFlight = false
-    @State private var hoveredSidebarTab: SettingsTab?
-    @State private var hoveredSettingsTab: SettingsDetailTab?
+    @State private var visitedTabs: Set<SettingsTab>
+    @State private var visitedDetailTabs: Set<SettingsDetailTab>
+    /// Bumps past launches' entitlement polling: refreshes run at most every
+    /// few minutes instead of on every window activation.
+    private static let entitlementRefreshInterval: TimeInterval = 300
+    private static var lastEntitlementFetchAt: Date?
     private let cloudAuth = CloudAuthService()
     private let cloudService = OpenFlowCloudService()
     private var cloudBusy: Bool { cloudAuthInFlight || cloudBillingInFlight }
     private let chromeHeight: CGFloat = 128
 
     init(initialTab: SettingsTab = .general) {
-        _selectedTab = State(initialValue: initialTab == .permissions ? .settings : initialTab)
-        _settingsTab = State(initialValue: initialTab == .permissions ? .permissions : .general)
+        let resolvedTab: SettingsTab = initialTab == .permissions ? .settings : initialTab
+        let resolvedDetail: SettingsDetailTab = initialTab == .permissions ? .permissions : .general
+        _selectedTab = State(initialValue: resolvedTab)
+        _settingsTab = State(initialValue: resolvedDetail)
+        _visitedTabs = State(initialValue: [resolvedTab])
+        _visitedDetailTabs = State(initialValue: [resolvedDetail])
     }
 
     var body: some View {
@@ -108,6 +121,19 @@ struct SettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .openflowCloudSessionDidChange)) { _ in
             applyCloudSessionSurface()
+        }
+        .onChange(of: selectedTab) { newValue in
+            visitedTabs.insert(newValue)
+            // The async hop ends the interval once the new page has committed.
+            DispatchQueue.main.async {
+                OpenflowSignpost.endTabSwitch(arrived: String(describing: newValue))
+            }
+        }
+        .onChange(of: settingsTab) { newValue in
+            visitedDetailTabs.insert(newValue)
+            DispatchQueue.main.async {
+                OpenflowSignpost.endTabSwitch(arrived: "settings.\(newValue.rawValue)")
+            }
         }
     }
 
@@ -194,147 +220,52 @@ struct SettingsView: View {
     }
 
     private func topNav(_ title: String, _ symbol: String, _ tab: SettingsTab) -> some View {
-        Button {
+        HubTopNavButton(title: title, symbol: symbol, isSelected: selectedTab == tab) {
+            OpenflowSignpost.beginTabSwitch(to: String(describing: tab))
             selectedTab = tab
-        } label: {
-            HStack(alignment: .center, spacing: 7) {
-                Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 14, height: 14)
-                Text(title)
-                    .font(.system(size: 12, weight: .bold))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(selectedTab == tab ? FlowUI.ink : FlowUI.ink.opacity(0.66))
-            .padding(.horizontal, 11)
-            .frame(height: 32)
-            .background {
-                if selectedTab == tab {
-                    Capsule()
-                        .fill(FlowUI.selectedFill)
-                } else if hoveredSidebarTab == tab {
-                    Capsule()
-                        .fill(FlowUI.hoverFill)
-                }
-            }
-            .overlay {
-                if selectedTab == tab {
-                    Capsule().stroke(Color.white.opacity(0.17))
-                }
-            }
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            hoveredSidebarTab = hovering ? tab : nil
-        }
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                FlowLogo()
-                Text("openflow")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(FlowUI.ink)
-            }
-            .padding(.bottom, 12)
-
-            nav("Home", "square.grid.2x2", .general)
-            nav("History", "clock.arrow.circlepath", .history)
-            nav("Dictionary", "text.book.closed", .dictionary)
-            nav("Phrases", "text.quote", .phrases)
-            nav("Style", "textformat.size", .style)
-
-            Spacer()
-
-            if !permissionsReady {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Setup needed")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("Grant mic and Accessibility access.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Button("Fix Permissions") {
-                        settingsTab = .permissions
-                        selectedTab = .settings
-                    }
-                        .buttonStyle(FlowPrimaryButtonStyle())
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(FlowUI.panel, in: RoundedRectangle(cornerRadius: 8))
-                .glassEffect(.regular.tint(.white.opacity(0.10)), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(FlowUI.glassHairline))
-            }
-
-            nav("Settings", "gearshape", .settings)
-            Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 6)
-        }
-        .padding(18)
-        .frame(width: 214)
-        .background(.ultraThinMaterial)
-        .background(Color.white.opacity(0.05))
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(.white.opacity(0.38))
-                .frame(width: 1)
-        }
-    }
-
-    private func nav(_ title: String, _ symbol: String, _ tab: SettingsTab) -> some View {
-        Button {
-            selectedTab = tab
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: symbol)
-                    .frame(width: 18)
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                Spacer()
-            }
-            .foregroundStyle(selectedTab == tab ? Color.primary : Color.primary.opacity(0.82))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(sidebarBackground(for: tab), in: RoundedRectangle(cornerRadius: 7))
-            .glassEffect(selectedTab == tab || hoveredSidebarTab == tab ? .regular.tint(.white.opacity(0.10)).interactive() : .identity,
-                         in: RoundedRectangle(cornerRadius: 7))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            hoveredSidebarTab = hovering ? tab : nil
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
     private var content: some View {
-        switch selectedTab {
-        case .general:
+        // Pages mount lazily on first visit and stay alive afterwards, so a
+        // tab switch is an opacity flip instead of a from-scratch rebuild.
+        ZStack(alignment: .topLeading) {
             home.flowHubPagePadding()
-        case .permissions:
-            settingsPanel.padding(30)
-        case .dictionary:
-            DictionaryView().environmentObject(coordinator).flowHubPagePadding()
-        case .phrases:
-            PhrasesView().environmentObject(coordinator).flowHubPagePadding()
-        case .style:
-            StyleView().environmentObject(coordinator).flowHubPagePadding()
-        case .history:
-            HistoryView().environmentObject(coordinator).flowHubPagePadding()
-        case .apps:
-            AppsView(
-                cloudSignedIn: cloudSignedIn,
-                onBackToHome: { selectedTab = .general }
-            )
-            .environmentObject(coordinator)
-            .flowHubPagePadding()
-        case .settings:
-            settingsPanel.padding(30)
+                .hubPageVisible(selectedTab == .general)
+            if visitedTabs.contains(.history) || selectedTab == .history {
+                HistoryView().environmentObject(coordinator).flowHubPagePadding()
+                    .hubPageVisible(selectedTab == .history)
+            }
+            if visitedTabs.contains(.apps) || selectedTab == .apps {
+                AppsView(
+                    cloudSignedIn: cloudSignedIn,
+                    onBackToHome: { selectedTab = .general }
+                )
+                .environmentObject(coordinator)
+                .flowHubPagePadding()
+                .hubPageVisible(selectedTab == .apps)
+            }
+            if visitedTabs.contains(.dictionary) || selectedTab == .dictionary {
+                DictionaryView().environmentObject(coordinator).flowHubPagePadding()
+                    .hubPageVisible(selectedTab == .dictionary)
+            }
+            if visitedTabs.contains(.phrases) || selectedTab == .phrases {
+                PhrasesView().environmentObject(coordinator).flowHubPagePadding()
+                    .hubPageVisible(selectedTab == .phrases)
+            }
+            if visitedTabs.contains(.style) || selectedTab == .style {
+                StyleView().environmentObject(coordinator).flowHubPagePadding()
+                    .hubPageVisible(selectedTab == .style)
+            }
+            if visitedTabs.contains(.permissions) || selectedTab == .permissions {
+                settingsPanel.padding(30)
+                    .hubPageVisible(selectedTab == .permissions)
+            }
+            if visitedTabs.contains(.settings) || selectedTab == .settings {
+                settingsPanel.padding(30)
+                    .hubPageVisible(selectedTab == .settings)
+            }
         }
     }
 
@@ -462,23 +393,26 @@ struct SettingsView: View {
     }
 
     private func refreshCloudEntitlement() {
-        guard !checkingCloudEntitlement,
-              let token = try? KeychainService.shared.cloudSessionToken(),
-              !token.isEmpty else {
+        guard !checkingCloudEntitlement, credentials.hasCloudSessionToken else {
             cloudSignedIn = false
             cloudEntitled = false
             cloudTier = nil
-            coordinator.cloudTier = nil
+            coordinator.cloudAccount.tier = nil
             return
         }
         cloudSignedIn = true
         coordinator.noteSetupReadinessChanged()
+        if let lastFetch = Self.lastEntitlementFetchAt,
+           Date().timeIntervalSince(lastFetch) < Self.entitlementRefreshInterval {
+            return
+        }
         Task {
             await refreshCloudEntitlementAsync()
         }
     }
 
     private func refreshCloudEntitlementAsync() async {
+        Self.lastEntitlementFetchAt = Date()
         guard let baseURL = URL(string: coordinator.settings.cloudBaseURL) else { return }
         await MainActor.run {
             checkingCloudEntitlement = true
@@ -489,7 +423,7 @@ struct SettingsView: View {
                 cloudSignedIn = true
                 cloudEntitled = entitlement.canUseCloud
                 cloudTier = entitlement.tier
-                coordinator.cloudTier = entitlement.tier
+                coordinator.cloudAccount.tier = entitlement.tier
                 checkingCloudEntitlement = false
                 if coordinator.hasAPIKey() {
                     coordinator.settings.providerMode = .localGroq
@@ -520,7 +454,7 @@ struct SettingsView: View {
                 }
                 cloudEntitled = false
                 cloudTier = nil
-                coordinator.cloudTier = nil
+                coordinator.cloudAccount.tier = nil
                 checkingCloudEntitlement = false
                 cloudStatus = cloudMessage(for: statusError)
             }
@@ -544,10 +478,7 @@ struct SettingsView: View {
     }
 
     private var hasCloudSession: Bool {
-        guard let token = try? KeychainService.shared.cloudSessionToken() else {
-            return false
-        }
-        return !token.isEmpty
+        credentials.hasCloudSessionToken
     }
 
     private func applyCloudSessionSurface() {
@@ -555,8 +486,8 @@ struct SettingsView: View {
         if !hasCloudSession {
             cloudEntitled = false
             cloudTier = nil
-            coordinator.cloudTier = nil
-            if let notice = coordinator.cloudSessionNotice {
+            coordinator.cloudAccount.tier = nil
+            if let notice = coordinator.cloudAccount.sessionNotice {
                 cloudStatus = notice
             }
         }
@@ -570,11 +501,11 @@ struct SettingsView: View {
 
     private func signOutCloudAccount() {
         cloudAuth.signOut()
-        coordinator.cloudSessionNotice = nil
+        coordinator.cloudAccount.sessionNotice = nil
         cloudSignedIn = false
         cloudEntitled = false
         cloudTier = nil
-        coordinator.cloudTier = nil
+        coordinator.cloudAccount.tier = nil
         cloudStatus = "Signed out."
         coordinator.refreshAccountState()
         coordinator.noteSetupReadinessChanged()
@@ -612,7 +543,6 @@ struct SettingsView: View {
                     .fill(FlowUI.hairline)
                     .frame(width: 1)
                 settingsDetailScroller
-                    .id(settingsTab)
                     .frame(maxWidth: .infinity)
             }
             .background(FlowUI.panel, in: RoundedRectangle(cornerRadius: 8))
@@ -799,20 +729,34 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var settingsDetail: some View {
-        switch settingsTab {
+        // Detail panes mount lazily and stay alive so a rail switch does not
+        // rebuild the pane either.
+        ZStack(alignment: .topLeading) {
+            ForEach(SettingsDetailTab.allCases) { tab in
+                if visitedDetailTabs.contains(tab) || tab == settingsTab {
+                    settingsDetailPage(tab)
+                        .hubPageVisible(tab == settingsTab)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func settingsDetailPage(_ tab: SettingsDetailTab) -> some View {
+        switch tab {
         case .general:
             settingsCard("General") {
-                settingsToggleRow("History", "Save final dictations locally.", isOn: $coordinator.settings.historyEnabled)
+                settingsToggleRow("History", "Save final dictations locally.", isOn: $settings.historyEnabled)
                 permissionDivider
-                settingsToggleRow("Context awareness", "Use the focused app for spacing and tone. When off, nearby field text stays on this Mac and is not sent for cleanup.", isOn: $coordinator.settings.contextAwarenessEnabled)
+                settingsToggleRow("Context awareness", "Use the focused app for spacing and tone. When off, nearby field text stays on this Mac and is not sent for cleanup.", isOn: $settings.contextAwarenessEnabled)
                 permissionDivider
-                settingsToggleRow("Browser detection", "Read supported browser URLs when available.", isOn: $coordinator.settings.browserURLDetectionEnabled)
+                settingsToggleRow("Browser detection", "Read supported browser URLs when available.", isOn: $settings.browserURLDetectionEnabled)
                 permissionDivider
-                settingsToggleRow("Spoken press enter", "When on, a trailing press enter, hit enter, or press return sends Return and those words are removed. When off, the words stay in the document.", isOn: $coordinator.settings.pressEnterCommandEnabled)
+                settingsToggleRow("Spoken press enter", "When on, a trailing press enter, hit enter, or press return sends Return and those words are removed. When off, the words stay in the document.", isOn: $settings.pressEnterCommandEnabled)
                 permissionDivider
-                settingsToggleRow("Voice agent", "Dictate outside a text field and openflow asks Jev to act on your Mac instead of typing.", isOn: $coordinator.settings.voiceAgentEnabled)
+                settingsToggleRow("Voice agent", "Dictate outside a text field and openflow asks Jev to act on your Mac instead of typing.", isOn: $settings.voiceAgentEnabled)
                 permissionDivider
-                settingsToggleRow("Hide inactive pill", "Only show the floating UI while recording, processing, or reporting a result.", isOn: $coordinator.settings.hideInactivePill)
+                settingsToggleRow("Hide inactive pill", "Only show the floating UI while recording, processing, or reporting a result.", isOn: $settings.hideInactivePill)
                     .onChange(of: coordinator.settings.hideInactivePill) { _, _ in
                         coordinator.refreshPillVisibility()
                     }
@@ -825,9 +769,9 @@ struct SettingsView: View {
             subscriptionDetail
         case .shortcuts:
             settingsCard("Shortcuts") {
-                shortcutPickerRow("Push-to-talk", "Hold this shortcut to dictate into the active field.", selection: $coordinator.settings.pushToTalkHotkey)
+                shortcutPickerRow("Push-to-talk", "Hold this shortcut to dictate into the active field.", selection: $settings.pushToTalkHotkey)
                 permissionDivider
-                shortcutPickerRow("Toggle dictation", "Press once to start, press again to stop.", selection: $coordinator.settings.toggleHotkey)
+                shortcutPickerRow("Toggle dictation", "Press once to start, press again to stop.", selection: $settings.toggleHotkey)
             }
         case .updates:
             settingsCard("Software updates") {
@@ -866,27 +810,7 @@ struct SettingsView: View {
             }
         case .diagnostics:
             settingsCard("Latency") {
-                Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 8) {
-                    metric("\(coordinator.settings.pushToTalkHotkey.keycapLabel) to listening", coordinator.currentMetrics.hotkeyToRecordingStart)
-                    metric("Audio duration", coordinator.currentMetrics.audioDuration)
-                    metric("Groq transcription", coordinator.currentMetrics.uploadAndTranscriptionTime)
-                    metric("Cleanup", coordinator.currentMetrics.cleanupTime)
-                    metric("Insertion", coordinator.currentMetrics.insertionTime)
-                    metric("Total", coordinator.currentMetrics.totalTime)
-                }
-                ForEach(coordinator.debugLog.prefix(8), id: \.self) { line in
-                    Text(line).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
-                }
-                HStack {
-                    Text("Full diagnostics are written to openflow-debug.log continuously.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Open Log File") {
-                        DiagnosticsLog.shared.revealInFinder()
-                    }
-                    .buttonStyle(FlowSecondaryButtonStyle())
-                }
+                DiagnosticsPane()
             }
 
             settingsCard("Insertion reports") {
@@ -972,7 +896,7 @@ struct SettingsView: View {
     }
 
     private func removeGroqKey() {
-        KeychainService.shared.deleteAPIKey()
+        coordinator.deleteAPIKey()
         apiKey = ""
         groqKeyStatus = "Groq key removed."
         if cloudEntitled {
@@ -1027,53 +951,13 @@ struct SettingsView: View {
     }
 
     private func settingsRailButton(_ tab: SettingsDetailTab) -> some View {
-        Button {
+        SettingsRailButtonView(tab: tab, isSelected: settingsTab == tab) {
+            OpenflowSignpost.beginTabSwitch(to: "settings.\(tab.rawValue)")
             settingsTab = tab
-        } label: {
-            HStack(spacing: 11) {
-                Image(systemName: tab.symbol)
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 18)
-                Text(tab.title)
-                    .font(.system(size: 14, weight: .bold))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                Spacer()
-            }
-            .foregroundStyle(settingsTab == tab ? FlowUI.ink : FlowUI.ink.opacity(0.66))
-            .padding(.horizontal, 10)
-            .frame(height: 38)
-            .background {
-                if settingsTab == tab {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(FlowUI.selectedFill)
-                } else if hoveredSettingsTab == tab {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(FlowUI.hoverFill)
-                }
-            }
-            .overlay {
-                if settingsTab == tab {
-                    RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.17))
-                }
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            hoveredSettingsTab = hovering ? tab : nil
         }
     }
 
-    private func sidebarBackground(for tab: SettingsTab) -> Color {
-        if selectedTab == tab {
-            return Color(red: 0.94, green: 0.93, blue: 0.90)
-        }
-        if hoveredSidebarTab == tab {
-            return FlowUI.ink.opacity(0.045)
-        }
-        return .clear
-    }
+
 
     private func settingsToggleRow(_ title: String, _ subtitle: String, isOn: Binding<Bool>) -> some View {
         HStack(spacing: 16) {
@@ -1208,12 +1092,12 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 18)
-                FlowMenuPicker(selection: $coordinator.settings.microphoneDeviceID,
+                FlowMenuPicker(selection: $settings.microphoneDeviceID,
                                options: microphonePickerOptions,
                                title: microphoneTitle,
                                width: 220)
             }
-            if let message = coordinator.inputRouteStatus.message {
+            if let message = coordinator.audioRoute.inputRouteStatus.message {
                 Text(message)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(FlowUI.amber)
@@ -1322,6 +1206,141 @@ struct SettingsView: View {
             Text("\(Int(value * 1000)) ms")
                 .font(.system(.body, design: .monospaced))
         }
+    }
+}
+
+private struct HubTopNavButton: View {
+    let title: String
+    let symbol: String
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: 7) {
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 14, height: 14)
+                Text(title)
+                    .font(.system(size: 12, weight: .bold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isSelected ? FlowUI.ink : FlowUI.ink.opacity(0.66))
+            .padding(.horizontal, 11)
+            .frame(height: 32)
+            .background {
+                if isSelected {
+                    Capsule()
+                        .fill(FlowUI.selectedFill)
+                } else if hovering {
+                    Capsule()
+                        .fill(FlowUI.hoverFill)
+                }
+            }
+            .overlay {
+                if isSelected {
+                    Capsule().stroke(Color.white.opacity(0.17))
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+private struct SettingsRailButtonView: View {
+    let tab: SettingsDetailTab
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                Image(systemName: tab.symbol)
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 18)
+                Text(tab.title)
+                    .font(.system(size: 14, weight: .bold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer()
+            }
+            .foregroundStyle(isSelected ? FlowUI.ink : FlowUI.ink.opacity(0.66))
+            .padding(.horizontal, 10)
+            .frame(height: 38)
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(FlowUI.selectedFill)
+                } else if hovering {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(FlowUI.hoverFill)
+                }
+            }
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.17))
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// Observes `DiagnosticsStore` itself so log/metric appends only re-render
+/// this pane instead of the whole settings window.
+private struct DiagnosticsPane: View {
+    @EnvironmentObject private var diagnostics: DiagnosticsStore
+    @EnvironmentObject private var settings: UserSettings
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 8) {
+            metric("\(settings.pushToTalkHotkey.keycapLabel) to listening", diagnostics.currentMetrics.hotkeyToRecordingStart)
+            metric("Audio duration", diagnostics.currentMetrics.audioDuration)
+            metric("Groq transcription", diagnostics.currentMetrics.uploadAndTranscriptionTime)
+            metric("Cleanup", diagnostics.currentMetrics.cleanupTime)
+            metric("Insertion", diagnostics.currentMetrics.insertionTime)
+            metric("Total", diagnostics.currentMetrics.totalTime)
+        }
+        ForEach(diagnostics.entries.prefix(8), id: \.self) { line in
+            Text(line).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+        }
+        HStack {
+            Text("Full diagnostics are written to openflow-debug.log continuously.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Open Log File") {
+                DiagnosticsLog.shared.revealInFinder()
+            }
+            .buttonStyle(FlowSecondaryButtonStyle())
+        }
+    }
+
+    private func metric(_ label: String, _ value: TimeInterval) -> some View {
+        GridRow {
+            Text(label)
+            Text("\(Int(value * 1000)) ms")
+                .font(.system(.body, design: .monospaced))
+        }
+    }
+}
+
+private extension View {
+    /// Keeps a mounted hub page in the view hierarchy but hidden and inert, so
+    /// a tab switch is an opacity flip instead of a full rebuild.
+    @ViewBuilder
+    func hubPageVisible(_ visible: Bool) -> some View {
+        opacity(visible ? 1 : 0)
+            .disabled(!visible)
+            .allowsHitTesting(visible)
+            .accessibilityHidden(!visible)
+            .zIndex(visible ? 1 : 0)
     }
 }
 

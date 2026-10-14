@@ -2,6 +2,10 @@ import SwiftUI
 
 struct OnboardingFlowView: View {
     @EnvironmentObject private var coordinator: DictationCoordinator
+    @EnvironmentObject private var settings: UserSettings
+    @EnvironmentObject private var permissionsStore: PermissionsService
+    @EnvironmentObject private var credentials: CredentialStore
+    @EnvironmentObject private var cloudAccount: CloudAccountStore
     @State private var step: OnboardingStep = .welcome
     @State private var apiKey = ""
     @State private var cloudStatus = "Sign in to start using openflow Pro."
@@ -63,7 +67,7 @@ struct OnboardingFlowView: View {
             refocusOnboardingWindow()
         }
         .onReceive(NotificationCenter.default.publisher(for: .openflowCloudSessionDidChange)) { _ in
-            if !hasCloudToken, let notice = coordinator.cloudSessionNotice {
+            if !hasCloudToken, let notice = coordinator.cloudAccount.sessionNotice {
                 cloudStatus = notice
             }
         }
@@ -71,7 +75,7 @@ struct OnboardingFlowView: View {
             BringYourOwnKeySheet(apiKey: $apiKey,
                                  hasAPIKey: hasAPIKey,
                                  onRemove: {
-                KeychainService.shared.deleteAPIKey()
+                coordinator.deleteAPIKey()
                 apiKey = ""
                 localKeyConfigured = false
                 if cloudEntitled {
@@ -431,8 +435,7 @@ struct OnboardingFlowView: View {
     }
 
     private var hasCloudToken: Bool {
-        guard let token = try? KeychainService.shared.cloudSessionToken() else { return false }
-        return !token.isEmpty
+        credentials.hasCloudSessionToken
     }
 
     private func onboardingPage<Content: View>(title: String, subtitle: String, @ViewBuilder content: () -> Content) -> some View {
@@ -700,7 +703,7 @@ struct OnboardingFlowView: View {
             await MainActor.run {
                 cloudEntitled = entitlement.canUseCloud
                 cloudTier = entitlement.tier
-                coordinator.cloudTier = entitlement.tier
+                coordinator.cloudAccount.tier = entitlement.tier
                 cloudWordsRemaining = entitlement.wordsRemaining
                 cloudWordLimit = entitlement.wordLimit
                 checkingCloudEntitlement = false
@@ -727,7 +730,7 @@ struct OnboardingFlowView: View {
             await MainActor.run {
                 cloudEntitled = false
                 cloudTier = nil
-                coordinator.cloudTier = nil
+                coordinator.cloudAccount.tier = nil
                 checkingCloudEntitlement = false
                 cloudStatus = cloudMessage(for: statusError)
             }

@@ -1,6 +1,5 @@
 import AppKit
 
-@MainActor
 final class ContextService {
     struct FocusedSnapshot {
         var context: FormattingContext
@@ -36,19 +35,19 @@ final class ContextService {
 
     private let browserContext = BrowserContextService()
 
-    func capture(settings: UserSettings) -> FormattingContext {
-        captureSnapshot(settings: settings).context
+    func capture(input: ContextCaptureInput) -> FormattingContext {
+        captureSnapshot(input: input).context
     }
 
-    func captureSnapshot(settings: UserSettings,
+    func captureSnapshot(input: ContextCaptureInput,
                          activeApplication: NSRunningApplication? = nil,
                          searchDescendants: Bool = true) -> FocusedSnapshot {
         let active = activeApplication ?? NSWorkspace.shared.frontmostApplication
         let appName = active?.localizedName ?? "Unknown"
         let bundleID = active?.bundleIdentifier ?? ""
         let fieldContext = focusedTextContext(app: active, searchDescendants: searchDescendants)
-        let useContext = settings.contextAwarenessEnabled
-        let browserURL = useContext && settings.browserURLDetectionEnabled ? browserContext.currentURL(bundleID: bundleID) : nil
+        let useContext = input.contextAwarenessEnabled
+        let browserURL = useContext && input.browserURLDetectionEnabled ? browserContext.currentURL(bundleID: bundleID) : nil
         // Category is a safety input (terminal confirmation, local-only cleanup). It is
         // computed from the focused app even when the user has turned context awareness
         // off; that toggle only controls whether surrounding field text leaves the Mac.
@@ -61,7 +60,7 @@ final class ContextService {
                                         textBefore: useContext ? fieldContext.textBefore : nil,
                                         textAfter: useContext ? fieldContext.textAfter : nil,
                                         browserURL: browserURL,
-                                        stylePreset: useContext ? settings.stylePreset : .auto)
+                                        stylePreset: useContext ? input.stylePreset : .auto)
         return FocusedSnapshot(context: context,
                                element: fieldContext.element,
                                focusedWindow: fieldContext.focusedWindow,
@@ -552,5 +551,20 @@ final class BrowserContextService {
         let script = NSAppleScript(source: source)
         let result = script?.executeAndReturnError(&error)
         return result?.stringValue
+    }
+}
+
+/// Sendable settings snapshot for off-main context capture. Built on the main
+/// actor so the AX/NSWorkspace reads themselves can run detached.
+struct ContextCaptureInput {
+    var contextAwarenessEnabled = true
+    var browserURLDetectionEnabled = true
+    var stylePreset: StylePreset = .auto
+
+    @MainActor
+    init(settings: UserSettings) {
+        contextAwarenessEnabled = settings.contextAwarenessEnabled
+        browserURLDetectionEnabled = settings.browserURLDetectionEnabled
+        stylePreset = settings.stylePreset
     }
 }

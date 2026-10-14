@@ -320,8 +320,27 @@ final class SettingsWindowController {
     }
 
     func show(coordinator: DictationCoordinator, selectedTab: SettingsTab = .general) {
+        // Reuse the hub window for plain opens: its mounted pages stay alive,
+        // so re-showing is cheap. Explicit tab targets still rebuild the view,
+        // matching the previous fresh-state behavior.
+        if selectedTab == .general, let window, window.isVisible {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+            return
+        }
         let view = SettingsView(initialTab: selectedTab)
-        let hosting = NSHostingController(rootView: view.environmentObject(coordinator))
+            .environmentObject(coordinator)
+            .environmentObject(coordinator.settings)
+            .environmentObject(coordinator.permissions)
+            .environmentObject(coordinator.history)
+            .environmentObject(coordinator.credentials)
+            .environmentObject(coordinator.cloudAccount)
+            .environmentObject(coordinator.audioRoute)
+            .environmentObject(coordinator.diagnostics)
+            .environmentObject(coordinator.homeStats)
+            .environmentObject(coordinator.pillViewModel)
+        let hosting = NSHostingController(rootView: view)
         configureHostingView(hosting.view)
         if window == nil {
             let newWindow = OpenflowAppWindow(contentViewController: hosting)
@@ -389,7 +408,17 @@ final class OnboardingWindowController {
             NSApp.activate(ignoringOtherApps: true)
             SettingsWindowController.shared.show(coordinator: coordinator)
         }
-        let hosting = NSHostingController(rootView: view.environmentObject(coordinator))
+        let hosting = NSHostingController(rootView: view
+            .environmentObject(coordinator)
+            .environmentObject(coordinator.settings)
+            .environmentObject(coordinator.permissions)
+            .environmentObject(coordinator.history)
+            .environmentObject(coordinator.credentials)
+            .environmentObject(coordinator.cloudAccount)
+            .environmentObject(coordinator.audioRoute)
+            .environmentObject(coordinator.diagnostics)
+            .environmentObject(coordinator.homeStats)
+            .environmentObject(coordinator.pillViewModel))
         configureHostingView(hosting.view)
         if window == nil {
             let newWindow = OpenflowAppWindow(contentViewController: hosting)

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DictionaryView: View {
     @EnvironmentObject private var coordinator: DictationCoordinator
+    @EnvironmentObject private var settings: UserSettings
     @State private var term = ""
     @State private var replacement = ""
     @State private var query = ""

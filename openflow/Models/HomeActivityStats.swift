@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
     /// Day-bucketed Home stats. Signed-in Home uses cloud days only; signed-out uses local history.
 struct HomeActivityDay: Equatable {

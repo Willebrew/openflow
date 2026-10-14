@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 
 struct OpenFlowCloudEntitlement: Decodable {
@@ -1274,4 +1275,14 @@ private struct CloudCleanupRequest: Encodable {
         case emailSignOffName = "email_sign_off_name"
         case model
     }
+}
+
+/// View-facing cloud account state (tier, stats, session notices). Views that
+/// display cloud data observe this store instead of the coordinator, so a
+/// stats refresh never re-renders pages that do not show cloud state.
+@MainActor
+final class CloudAccountStore: ObservableObject {
+    @Published var stats: OpenFlowCloudStats?
+    @Published var tier: String?
+    @Published var sessionNotice: String?
 }
