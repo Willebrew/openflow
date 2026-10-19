@@ -754,8 +754,6 @@ struct SettingsView: View {
                 permissionDivider
                 settingsToggleRow("Spoken press enter", "When on, a trailing press enter, hit enter, or press return sends Return and those words are removed. When off, the words stay in the document.", isOn: $settings.pressEnterCommandEnabled)
                 permissionDivider
-                settingsToggleRow("Voice agent", "Dictate outside a text field and openflow asks Jev to act on your Mac instead of typing.", isOn: $settings.voiceAgentEnabled)
-                permissionDivider
                 settingsToggleRow("Hide inactive pill", "Only show the floating UI while recording, processing, or reporting a result.", isOn: $settings.hideInactivePill)
                     .onChange(of: coordinator.settings.hideInactivePill) { _, _ in
                         coordinator.refreshPillVisibility()

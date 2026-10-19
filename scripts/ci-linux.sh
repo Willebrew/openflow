@@ -60,23 +60,6 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v swift >/dev/null 2>&1; then
     -o "$POLICY_BIN"
   "$POLICY_BIN"
   rm -f "$POLICY_BIN"
-  VOICE_AGENT_BIN="$(mktemp /tmp/openflow-voice-agent-check.XXXXXX)"
-  swiftc \
-    "$ROOT/openflow/Models/UserSettings.swift" \
-    "$ROOT/openflow/Models/DictationModels.swift" \
-    "$ROOT/openflow/Models/HomeActivityStats.swift" \
-    "$ROOT/openflow/Services/KeychainService.swift" \
-    "$ROOT/openflow/Services/CloudURLPolicy.swift" \
-    "$ROOT/openflow/Services/CloudSessionValidator.swift" \
-    "$ROOT/openflow/Services/AudioFileFormat.swift" \
-    "$ROOT/openflow/Services/OpenFlowCloudService.swift" \
-    "$ROOT/openflow/Services/OpenFlowProviderRouting.swift" \
-    "$ROOT/openflow/Services/TextInputFocusProbe.swift" \
-    "$ROOT/openflow/Services/VoiceAgentRouting.swift" \
-    "$ROOT/scripts/check-voice-agent-safety.swift" \
-    -o "$VOICE_AGENT_BIN"
-  "$VOICE_AGENT_BIN"
-  rm -f "$VOICE_AGENT_BIN"
 else
   echo "skipping Swift contract checks (macOS only)"
 fi

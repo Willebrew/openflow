@@ -30,7 +30,6 @@ final class DictationCoordinator: ObservableObject {
     private let insertionDiagnostics = InsertionDiagnosticsService()
     private let cloud = OpenFlowCloudService()
     private let cloudAuth = CloudAuthService()
-    private let agent = JevAgentService()
     private var sessionValidationInFlight = false
     private var lastMenuRevalidateAt: Date?
     private var sessionRefreshTimer: Timer?
@@ -39,9 +38,6 @@ final class DictationCoordinator: ObservableObject {
     private lazy var floatingWindow = FloatingDictationWindow(viewModel: pillViewModel)
     private var session: DictationSession?
     private var processingSessionID: UUID?
-    /// Strict text-input probe kicked off at dictation start. Runs off the
-    /// main thread with a bounded wait; audio capture never waits on it.
-    private var focusProbeTask: Task<FocusProbeResult, Never>?
     private var recordingWarningTask: Task<Void, Never>?
     private var recordingLimitTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
@@ -141,9 +137,6 @@ final class DictationCoordinator: ObservableObject {
             guard let self else { return }
             NSApp.activate(ignoringOtherApps: true)
             SettingsWindowController.shared.show(coordinator: self, selectedTab: .settings)
-        }
-        agent.onProgress = { [weak self] status in
-            self?.pillViewModel.subtitle = status
         }
     }
 
@@ -379,30 +372,8 @@ final class DictationCoordinator: ObservableObject {
                 self.session?.metrics.activeApp = contextSnapshot.context.activeAppName
                 self.session?.metrics.category = contextSnapshot.context.category
                 self.session?.metrics.contextAvailable = true
-                self.startFocusProbe()
             }
         }
-    }
-
-
-    /// Fires the strict text-input probe off the main thread. The AppKit
-    /// first-responder read happens here (main thread, pure property access);
-    /// the AX half runs detached with a bounded wait so a slow or hung
-    /// frontmost app can never delay audio capture or block the run loop.
-    private func startFocusProbe() {
-        focusProbeTask?.cancel()
-        if TextInputFocusProbe.appKitTextInputActive() {
-            focusProbeTask = Task {
-                FocusProbeResult(verdict: .textInput,
-                                 report: "strict=text appKitField=1",
-                                 elapsed: 0)
-            }
-            return
-        }
-        focusProbeTask = Task.detached(priority: .userInitiated) {
-            await TextInputFocusProbe.axStrictDecisionAsync(timeout: 1.5)
-        }
-        DiagnosticsLog.shared.write("focus probe started async at dictation start")
     }
 
     func refreshAccountState() {
@@ -714,14 +685,6 @@ final class DictationCoordinator: ObservableObject {
                     latencyTrace("whisper \(ms(transcribed.requestTime)) model \(transcribed.model) provider \(transcribed.provider)")
                 }
 
-                if await shouldRunVoiceAgent() {
-                    await runVoiceAgent(instruction: transcribed.text,
-                                        session: activeSession,
-                                        transcribed: transcribed,
-                                        formattingContext: formattingContext,
-                                        captured: captured)
-                    return
-                }
                 try await finishInsertion(transcribed: transcribed,
                                           session: activeSession,
                                           formattingContext: formattingContext,
@@ -730,14 +693,8 @@ final class DictationCoordinator: ObservableObject {
                 guard processingSessionID == activeSession.id else { return }
                 if case OpenflowError.noAudioCaptured(let reason) = error {
                     let wallMs = ms(Date().timeIntervalSince(activeSession.startedAt))
-                    let probeNote: String
-                    if let probeResult = await focusProbeTask?.value {
-                        probeNote = "probe=\(probeResult.report) elapsed=\(ms(probeResult.elapsed))"
-                    } else {
-                        probeNote = "probe=none"
-                    }
                     DiagnosticsLog.shared.write(
-                        "ignored empty dictation: reason=\(reason ?? "n/a") wall=\(wallMs) \(probeNote)")
+                        "ignored empty dictation: reason=\(reason ?? "n/a") wall=\(wallMs)")
                     log("ignored empty dictation: \(reason ?? "no voiced audio captured")")
                     OpenflowSignpost.endDictationPipeline(outcome: "no-audio")
                     processingSessionID = nil
@@ -767,120 +724,9 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
-    /// Dictation with no text field focused routes the spoken instruction to
-    /// the Jev voice agent instead of inserting text. Both probes run off the
-    /// main thread with bounded waits; any inconclusive signal dictates.
-    private func shouldRunVoiceAgent() async -> Bool {
-        guard settings.voiceAgentEnabled else {
-            DiagnosticsLog.shared.write("routing: dictate (voice agent toggle off)")
-            return false
-        }
-        let startProbe = await focusProbeTask?.value
-        DiagnosticsLog.shared.write(
-            "routing probe at start: \(startProbe?.report ?? "none")"
-                + (startProbe.map { " (elapsed \(ms($0.elapsed)))" } ?? ""))
-        let endProbe = await TextInputFocusProbe.strictDecisionAsync(timeout: 0.6)
-        DiagnosticsLog.shared.write(
-            "routing probe at end: \(endProbe.report) (elapsed \(ms(endProbe.elapsed)))")
-        let route = VoiceAgentRouting.decide(voiceAgentEnabled: true,
-                                             probeAtStart: startProbe?.verdict,
-                                             probeAtEnd: endProbe.verdict)
-        DiagnosticsLog.shared.write("routing: \(route == .voiceAgent ? "voice-agent" : "dictate")")
-        return route == .voiceAgent
-    }
-
-    private func runVoiceAgent(instruction: String,
-                               session: DictationSession,
-                               transcribed: TranscriptionResult,
-                               formattingContext: FormattingContext,
-                               captured: CapturedAudio) async {
-        guard let baseURL = URL(string: settings.cloudBaseURL), !settings.cloudBaseURL.isEmpty else {
-            await recoverTranscriptAsDictation(instruction: instruction,
-                                               transcribed: transcribed,
-                                               session: session,
-                                               formattingContext: formattingContext,
-                                               captured: captured,
-                                               agentSummary: "cloud URL unavailable")
-            return
-        }
-        DiagnosticsLog.shared.write("routing to voice agent: \(instruction)")
-        log("routing to voice agent: \(instruction)")
-        pillViewModel.subtitle = "Working"
-        let result = await agent.run(instruction: instruction,
-                                     settings: settings,
-                                     baseURL: baseURL)
-        var metrics = session.metrics
-        metrics.totalTime = Date().timeIntervalSince(session.startedAt)
-        metrics.insertionMethod = "voice-agent"
-        metrics.insertionVerified = result.completed
-        metrics.insertionAttempts = result.steps
-        metrics.insertionFailureReason = result.completed ? nil : result.summary
-        metrics.provider = result.provider
-        metrics.model = result.model
-        diagnostics.currentMetrics = metrics
-        log("voice agent finished: completed=\(result.completed), steps=\(result.steps), \(result.summary)")
-        DiagnosticsLog.shared.write(
-            "voice agent finished: completed=\(result.completed) steps=\(result.steps) \(result.summary)")
-        if VoiceAgentRouting.needsTranscriptRecovery(completed: result.completed,
-                                                     steps: result.steps) {
-            await recoverTranscriptAsDictation(instruction: instruction,
-                                               transcribed: transcribed,
-                                               session: session,
-                                               formattingContext: formattingContext,
-                                               captured: captured,
-                                               agentSummary: result.summary)
-            return
-        }
-        OpenflowSignpost.endDictationPipeline(outcome: "voice-agent")
-        _ = await refreshCloudStatsIfSignedIn()
-        guard processingSessionID == session.id else { return }
-        pillViewModel.state = .success
-        pillViewModel.subtitle = "Done"
-        revealPill()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self, self.processingSessionID == session.id else { return }
-            self.processingSessionID = nil
-            self.resetPillToIdle()
-            self.pillViewModel.subtitle = "Ready"
-            self.applyPillVisibility()
-        }
-    }
-
-    /// The agent declined, failed, or took zero actions -- the transcript
-    /// still belongs to the user. Copy it to the clipboard first so it can
-    /// never be lost, then run the normal cleanup + insertion path (which
-    /// also records history).
-    private func recoverTranscriptAsDictation(instruction: String,
-                                              transcribed: TranscriptionResult,
-                                              session: DictationSession,
-                                              formattingContext: FormattingContext,
-                                              captured: CapturedAudio,
-                                              agentSummary: String) async {
-        DiagnosticsLog.shared.write("voice agent fallback: recovering transcript (\(agentSummary))")
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(instruction, forType: .string)
-        log("voice agent gave up (\(agentSummary)); inserting transcript instead")
-        pillViewModel.subtitle = "Inserting text"
-        do {
-            try await finishInsertion(transcribed: transcribed,
-                                      session: session,
-                                      formattingContext: formattingContext,
-                                      captured: captured)
-        } catch {
-            DiagnosticsLog.shared.write(
-                "voice agent fallback insertion failed: \(String(describing: error))")
-            saveFailedDictationHistory(error: error,
-                                       session: session,
-                                       transcript: transcribed,
-                                       context: formattingContext)
-            showError(error, sessionID: session.id)
-        }
-    }
-
     /// Cleans up the transcript, inserts it, records metrics/history/stats,
-    /// and drives the result pill. Shared by normal dictation and the voice
-    /// agent transcript-recovery path.
+    /// and drives the result pill. Shared by normal dictation and the
+    /// launch-arg injection hook.
     private func finishInsertion(transcribed: TranscriptionResult,
                                  session: DictationSession,
                                  formattingContext: FormattingContext,

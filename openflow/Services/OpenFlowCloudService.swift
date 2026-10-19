@@ -279,22 +279,17 @@ final class OpenFlowCloudService {
     private let keychain: KeychainService
     private let session: URLSession
     private let deviceID: String
-    /// Test seam: when set, used instead of the Keychain session token so the
-    /// request builders can be exercised end-to-end without real credentials.
-    private let injectedSessionToken: String?
 
     init(keychain: KeychainService? = nil) {
         self.keychain = keychain ?? .shared
         self.session = Self.defaultSession
         self.deviceID = Self.loadDeviceID()
-        self.injectedSessionToken = nil
     }
 
-    init(keychain: KeychainService? = nil, session: URLSession, sessionToken: String? = nil) {
+    init(keychain: KeychainService? = nil, session: URLSession) {
         self.keychain = keychain ?? .shared
         self.session = session
         self.deviceID = Self.loadDeviceID()
-        self.injectedSessionToken = sessionToken
     }
 
     private static func loadDeviceID() -> String {
@@ -553,25 +548,6 @@ final class OpenFlowCloudService {
                              notes: response.notes)
     }
 
-    /// One Jev (TypeSafe System One) decision call, proxied through the
-    /// backend which holds TYPESAFE_API_KEY. `state` is the serialized screen
-    /// state; `questions` is the typed question map the API evaluates in
-    /// parallel.
-    func agentStep(state: [String: AnyCodableValue],
-                   questions: [String: AgentQuestionSpec],
-                   model: String,
-                   appName: String,
-                   bundleID: String,
-                   baseURL: URL) async throws -> AgentStepResponse {
-        try await post(path: "/openflow/agent/step",
-                       body: CloudAgentStepRequest(state: state,
-                                                  questions: questions,
-                                                  model: model,
-                                                  targetAppName: appName,
-                                                  targetBundleID: bundleID),
-                       baseURL: baseURL)
-    }
-
     func entitlement(baseURL: URL) async throws -> OpenFlowCloudEntitlement {
         try await get(path: "/openflow/entitlement", baseURL: baseURL)
     }
@@ -698,7 +674,7 @@ final class OpenFlowCloudService {
     }
 
     private func authorize(_ request: inout URLRequest) throws {
-        let sessionToken = try injectedSessionToken ?? keychain.cloudSessionToken()
+        let sessionToken = try keychain.cloudSessionToken()
         guard let sessionToken, !sessionToken.isEmpty else {
             throw OpenflowError.cloudAuthenticationRequired
         }
@@ -770,8 +746,6 @@ final class OpenFlowCloudService {
             return "This account has reached its monthly fair-use limit. Contact support if this seems wrong."
         case "provider_not_configured":
             return "The openflow service is not configured yet."
-        case "agent_step_unavailable":
-            return "The voice agent is unavailable right now. Please try again shortly."
         default:
             return "openflow could not complete that request (HTTP \(statusCode))."
         }
@@ -1138,107 +1112,6 @@ private struct CloudStyleDraftRequest: Encodable {
 private struct CloudStyleDraftResponse: Decodable {
     var name: String
     var prompt: String
-}
-
-/// Recursive Any <-> Codable bridge for building arbitrary JSON payloads
-/// (the Jev agent's state object and question criteria).
-struct AnyCodableValue: Codable {
-    let value: Any
-
-    init(_ value: Any) { self.value = value }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let bool = try? container.decode(Bool.self) {
-            value = bool
-        } else if let int = try? container.decode(Int.self) {
-            value = int
-        } else if let double = try? container.decode(Double.self) {
-            value = double
-        } else if let string = try? container.decode(String.self) {
-            value = string
-        } else if let array = try? container.decode([AnyCodableValue].self) {
-            value = array.map { $0.value }
-        } else if let object = try? container.decode([String: AnyCodableValue].self) {
-            value = object.mapValues { $0.value }
-        } else if container.decodeNil() {
-            value = NSNull()
-        } else {
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
-        }
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch value {
-        case let bool as Bool:
-            try container.encode(bool)
-        case let int as Int:
-            try container.encode(int)
-        case let double as Double:
-            try container.encode(double)
-        case let string as String:
-            try container.encode(string)
-        case let array as [Any]:
-            try container.encode(array.map(AnyCodableValue.init))
-        case let object as [String: Any]:
-            try container.encode(object.mapValues(AnyCodableValue.init))
-        case is NSNull:
-            try container.encodeNil()
-        default:
-            try container.encode(String(describing: value))
-        }
-    }
-}
-
-/// One question in a Jev /v1/systemone request: type + instructions +
-/// criteria map (option name -> description for choice/score, or
-/// {"true": ..., "false": ...} for noul).
-struct AgentQuestionSpec: Encodable {
-    var type: String
-    var instructions: String
-    var criteria: [String: AnyCodableValue]?
-}
-
-struct CloudAgentStepRequest: Encodable {
-    var state: [String: AnyCodableValue]
-    var questions: [String: AgentQuestionSpec]
-    var model: String
-    var targetAppName: String
-    var targetBundleID: String
-
-    enum CodingKeys: String, CodingKey {
-        case state
-        case questions
-        case model
-        case targetAppName = "target_app_name"
-        case targetBundleID = "target_bundle_id"
-    }
-}
-
-struct AgentStepResponse: Decodable {
-    var model: String?
-    var answers: [String: AgentAnswer]
-    var usage: AgentUsage?
-}
-
-struct AgentAnswer: Decodable {
-    var type: String?
-    var choice: String?
-    var score: Double?
-    var noul: Double?
-    var confidence: Double?
-    var probabilities: [String: Double]?
-}
-
-struct AgentUsage: Decodable {
-    var inputTokens: Int?
-    var outputTokens: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case inputTokens = "input_tokens"
-        case outputTokens = "output_tokens"
-    }
 }
 
 private struct CloudCleanupRequest: Encodable {
