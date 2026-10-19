@@ -1,9 +1,18 @@
 # Home Stats (streak, total words, WPM)
 
 The Flow Hub Home panel shows four numbers: a day streak, total words, average
-words per minute, and a 28-day usage grid. All four are derived in
-`openflow/Models/HomeActivityStats.swift` from two independent sources, so the
-merge rules matter more than the arithmetic.
+words per minute, and a 28-day usage grid. All four are derived by the pure
+functions in `openflow/Models/HomeActivityStats.swift` from two independent
+sources, so the merge rules matter more than the arithmetic.
+
+Views never call those helpers directly. `HomeStatsStore`
+(`openflow/Models/HomeStatsStore.swift`) owns a published
+`HomeStatsSnapshot`; `DictationCoordinator.pushHomeStatsInputs` feeds it a
+`HomeStatsInput` whenever history, cloud stats, or sign-in state change, and
+the store debounces (0.15 s) and rebuilds off the main thread via
+`buildSnapshot(input:)`. HomeDashboardView and AppsView read
+`homeStats.snapshot` through `@EnvironmentObject`, so recomputing never
+stalls hub tab switching.
 
 ## Inputs
 
@@ -14,8 +23,8 @@ merge rules matter more than the arithmetic.
 | Local lifetime | `HistoryService.lifetimeWords` (`lifetime.json`) | none, running total |
 | Cloud lifetime | `OpenFlowCloudStats.lifetime.words` | none, running total |
 
-`SettingsView.activityDays` maps history items and `coordinator.cloudStats.days`
-into `HomeActivityStats.aggregate(history:cloudDays:)`, which returns
+`HomeStatsStore.buildSnapshot` maps history items and `cloudStats.days` into
+`HomeActivityStats.aggregate(history:cloudDays:)`, which returns
 `[HomeActivityDay]` sorted by `dayKey`.
 
 Both stores live in `~/Library/Application Support/openflow/`:

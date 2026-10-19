@@ -22,6 +22,8 @@ Move the app into `/Applications`, open it, and finish onboarding.
 
 Hold **Fn**, speak, then release. Other hotkeys live in Settings.
 
+Dictating with no text field focused hands the instruction to the voice agent instead of typing. It needs a signed-in openflow account; the toggle lives in Settings.
+
 The menu bar icon opens the hub. From there you can reach Home, History, Dictionary, Phrases, Style, Apps, and Settings.
 
 On official builds you can sign in to openflow Pro, or use your own Groq API key stored in Keychain.
