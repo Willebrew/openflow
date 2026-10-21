@@ -22,6 +22,7 @@ fi
 
 node "$ROOT/scripts/check-audio-capture-safety.mjs"
 node "$ROOT/scripts/check-browser-insertion-safety.mjs"
+node "$ROOT/scripts/check-ax-insertion-safety.mjs"
 node "$ROOT/scripts/check-hotkey-text-input-safety.mjs"
 node "$ROOT/scripts/check-permissions-flow-safety.mjs"
 node "$ROOT/scripts/check-history-ui-safety.mjs"
@@ -52,6 +53,13 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v swift >/dev/null 2>&1; then
   "$HOME_ACTIVITY_BIN"
   rm -f "$HOME_ACTIVITY_BIN"
   swift "$ROOT/scripts/check-insertion-text-preparation.swift"
+  AX_INSERTION_BIN="$(mktemp /tmp/openflow-ax-insertion-check.XXXXXX)"
+  swiftc \
+    "$ROOT/openflow/Services/AXInsertionPolicy.swift" \
+    "$ROOT/scripts/check-ax-insertion-policy.swift" \
+    -o "$AX_INSERTION_BIN"
+  "$AX_INSERTION_BIN"
+  rm -f "$AX_INSERTION_BIN"
   swift "$ROOT/scripts/check-user-settings-persistence.swift"
   POLICY_BIN="$(mktemp /tmp/openflow-hotkey-policy-check.XXXXXX)"
   swiftc \

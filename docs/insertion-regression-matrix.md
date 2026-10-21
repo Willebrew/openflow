@@ -30,11 +30,14 @@ REQUIRE_MANUAL_INSERTION_REGRESSION=1 scripts/check-local-release-gate.sh
 | Terminal/iTerm | Native key events, Unicode events | Unverified |
 | Messages | Unicode events, AX if available | Verified when readable |
 | Mail | AX focused/descendant | Verified when readable |
+| Notes / TextEdit | Focused AX | Verified. The dictated text appears once. |
+| Electron / Chromium host that is not a browser bundle | Focused AX | Verified once the value readback updates. The dictated text appears once. |
 | Cursor/VS Code editor | Native key events, Unicode events | Usually unverified |
 
 Failure criteria:
 
 - History shows transcription success but insertion failure with no method.
+- The dictated text appears twice in the target field.
 - Pill shows success after `succeeded == false`.
 - Clipboard contents change during insertion.
 - The second try works but first try fails without a focus-race diagnostic.
