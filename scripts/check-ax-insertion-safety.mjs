@@ -25,10 +25,14 @@ const end = insertion.indexOf("private func spacingAdjusted", start);
 assert(start !== -1 && end !== -1, "could not locate tryAXInsertion");
 const body = insertion.slice(start, end);
 
-assert(body.includes("await AXInsertionPolicy.resolve"), "selected-text insertion does not consult the delayed-apply policy");
+assert(body.includes("await AXInsertionPolicy.resolveTracing"), "selected-text insertion does not consult the delayed-apply policy");
 assert(
-  body.indexOf("await AXInsertionPolicy.resolve") < body.lastIndexOf("return replaceAXValue"),
+  body.indexOf("await AXInsertionPolicy.resolveTracing") < body.lastIndexOf("replaceAXValue"),
   "AXValue replacement can run before the delayed readback"
+);
+assert(
+  body.indexOf("acceptWithoutProof") < body.indexOf("await AXInsertionPolicy.resolveTracing"),
+  "a successful Electron write can still reread and replace AXValue"
 );
 assert(
   body.includes("AXInsertionPolicy.shouldReplaceWholeValue"),
@@ -48,5 +52,33 @@ assert(
   policy.includes("if sampleIndex < maxDelayedSamples { return .recheckLater }"),
   "an unchanged readback must recheck before replacing the whole value"
 );
+assert(
+  policy.includes("case .unreadable, .unverified:\n            return .stop(verified: false)"),
+  "an unverified successful write must not start another strategy"
+);
+assert(policy.includes("trustSuccessDespiteUnchangedReadback"), "stale captured readback is not handled");
+assert(
+  read("openflow/Services/ElectronAppDetection.swift").includes("Electron Framework.framework"),
+  "Electron detection does not look for Electron Framework.framework"
+);
+
+const capturedStart = insertion.indexOf("func insert(_ text: String,\n                into element: AXUIElement");
+const capturedEnd = insertion.indexOf("private func result(method:", capturedStart);
+assert(capturedStart !== -1 && capturedEnd !== -1, "could not locate captured insertion");
+const captured = insertion.slice(capturedStart, capturedEnd);
+assert(
+  captured.indexOf("electronTarget || shouldPreferKeyboardInsertion") < captured.indexOf("tryAXInsertion"),
+  "Electron can write the captured element before the keyboard route"
+);
+assert(
+  captured.includes("label: \"captured\""),
+  "captured insertion does not log the attempt"
+);
+assert(
+  insertion.includes("selectedText=\\(attempt.selectedText) decision=\\(attempt.decision) rereads=\\(attempt.rereadCount) replace=\\(attempt.replaceRan) verify=\\(verifyLog) fallback="),
+  "insertion diagnostics omit the write, decision, reread count, replace flag, verify result, or fallback reason"
+);
+assert(!insertion.includes("logInsertion(text"), "insertion diagnostics can log dictated text");
+assert(!captured.includes("case .unverified:\n                    break"), "unverified captured writes still fall through to a second insert");
 
 console.log("ax insertion safety checks passed");

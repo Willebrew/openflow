@@ -34,15 +34,17 @@ final class TextInsertionService {
         }
         releaseShortcutModifiers()
         let browserTarget = isBrowserApp()
+        let electronTarget = isElectronApp(processIdentifier: targetProcessIdentifier)
+        let typedEventTarget = browserTarget || electronTarget
         var focused: AXUIElement?
-        if !browserTarget {
+        if !typedEventTarget {
             focused = focusedElement()
         }
-        if !browserTarget, focused == nil {
+        if !typedEventTarget, focused == nil {
             try? await Task.sleep(nanoseconds: 90_000_000)
             focused = focusedElement()
         }
-        let prepared = browserTarget ? text.trimmingCharacters(in: .newlines) : spacingAdjusted(text, focused: focused)
+        let prepared = typedEventTarget ? text.trimmingCharacters(in: .newlines) : spacingAdjusted(text, focused: focused)
         let emptyPrepared = prepared.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if emptyPrepared, !pressEnter {
             return .failed(reason: "Final text was empty after spacing adjustment.",
@@ -238,7 +240,10 @@ final class TextInsertionService {
                            targetApp: target.name,
                            targetBundleID: target.bundleID)
         }
-        if browserTarget {
+        if browserTarget || electronTarget {
+            if electronTarget {
+                logInsertion("route=electron-keyboard selectedText=skipped decision=none rereads=0 replace=false verify=skipped fallback=none")
+            }
             attempts += 1
             switch await typeTextAsNativeKeyEvents(prepared) {
             case .posted:
@@ -269,23 +274,21 @@ final class TextInsertionService {
             attempts += 1
             let candidatePrepared = spacingAdjusted(text, focused: focused)
             let before = stringValue(in: focused)
-            if await tryAXInsertion(candidatePrepared, element: focused) {
-                switch verifyInsertion(candidatePrepared, element: focused, previousValue: before) {
-                case .verified:
-                    if mayPressEnter { sendEnter() }
-                    return result(method: .focusedAX, verified: true, attempts: attempts, target: target)
-                case .unreadable:
-                    // The AX write succeeded but the element cannot be read
-                    // back. Continuing to other candidates or key-event
-                    // fallback would duplicate the text if the write landed.
-                    if mayPressEnter { sendEnter() }
-                    return result(method: .focusedAX, verified: false, attempts: attempts, target: target)
-                case .unverified:
-                    failures.append("focused AX reported success but the text did not land")
-                }
-            } else {
-                failures.append("focused AX insertion failed")
+            let attempt = await tryAXInsertion(candidatePrepared,
+                                              element: focused,
+                                              trustSuccessDespiteUnchangedReadback: electronTarget)
+            if let finished = finishAXAttempt(attempt,
+                                              text: candidatePrepared,
+                                              element: focused,
+                                              previousValue: before,
+                                              method: .focusedAX,
+                                              mayPressEnter: mayPressEnter,
+                                              attempts: attempts,
+                                              target: target,
+                                              label: "focused") {
+                return finished
             }
+            failures.append("focused AX insertion failed")
         }
         if category == .messages || isMessagesApp() {
             attempts += 1
@@ -299,17 +302,19 @@ final class TextInsertionService {
             let candidatePrepared = spacingAdjusted(text, focused: candidate)
             let before = stringValue(in: candidate)
             attempts += 1
-            if await tryAXInsertion(candidatePrepared, element: candidate) {
-                switch verifyInsertion(candidatePrepared, element: candidate, previousValue: before) {
-                case .verified:
-                    if mayPressEnter { sendEnter() }
-                    return result(method: .descendantAX, verified: true, attempts: attempts, target: target)
-                case .unreadable:
-                    if mayPressEnter { sendEnter() }
-                    return result(method: .descendantAX, verified: false, attempts: attempts, target: target)
-                case .unverified:
-                    failures.append("descendant AX reported success but the text did not land")
-                }
+            let attempt = await tryAXInsertion(candidatePrepared,
+                                              element: candidate,
+                                              trustSuccessDespiteUnchangedReadback: electronTarget)
+            if let finished = finishAXAttempt(attempt,
+                                              text: candidatePrepared,
+                                              element: candidate,
+                                              previousValue: before,
+                                              method: .descendantAX,
+                                              mayPressEnter: mayPressEnter,
+                                              attempts: attempts,
+                                              target: target,
+                                              label: "descendant") {
+                return finished
             }
         }
         failures.append("editable descendant AX scan found no writable target")
@@ -355,7 +360,8 @@ final class TextInsertionService {
         }
         releaseShortcutModifiers()
         let browserTarget = isBrowserApp()
-        let prepared = browserTarget ? text.trimmingCharacters(in: .newlines) : spacingAdjusted(text, focused: element)
+        let electronTarget = isElectronApp(processIdentifier: targetProcessIdentifier)
+        let prepared = (browserTarget || electronTarget) ? text.trimmingCharacters(in: .newlines) : spacingAdjusted(text, focused: element)
         if prepared.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             guard pressEnter else {
                 return .failed(reason: "Final text was empty after spacing adjustment.",
@@ -381,7 +387,7 @@ final class TextInsertionService {
                                 category: category,
                                 targetProcessIdentifier: targetProcessIdentifier)
         }
-        if browserTarget || shouldPreferKeyboardInsertion(category: category, target: target) {
+        if browserTarget || electronTarget || shouldPreferKeyboardInsertion(category: category, target: target) {
             return await insert(text,
                                 pressEnter: pressEnter,
                                 settings: settings,
@@ -390,17 +396,20 @@ final class TextInsertionService {
         }
         if !isBrowserApp() {
             let before = stringValue(in: element)
-            if await tryAXInsertion(prepared, element: element) {
-                switch verifyInsertion(prepared, element: element, previousValue: before) {
-                case .verified:
-                    if pressEnter, submitConfirmationReason == nil { sendEnter() }
-                    return result(method: .capturedAX, verified: true, attempts: 1, target: target)
-                case .unreadable:
-                    if pressEnter, submitConfirmationReason == nil { sendEnter() }
-                    return result(method: .capturedAX, verified: false, attempts: 1, target: target)
-                case .unverified:
-                    break
-                }
+            let attempt = await tryAXInsertion(prepared,
+                                              element: element,
+                                              trustSuccessDespiteUnchangedReadback: electronTarget)
+            let mayPressEnter = pressEnter && submitConfirmationReason == nil
+            if let finished = finishAXAttempt(attempt,
+                                              text: prepared,
+                                              element: element,
+                                              previousValue: before,
+                                              method: .capturedAX,
+                                              mayPressEnter: mayPressEnter,
+                                              attempts: 1,
+                                              target: target,
+                                              label: "captured") {
+                return finished
             }
         }
         await refocusCapturedElement(element)
@@ -654,18 +663,87 @@ final class TextInsertionService {
         try? await Task.sleep(nanoseconds: 70_000_000)
     }
 
-    private func tryAXInsertion(_ text: String, element: AXUIElement) async -> Bool {
+    private struct AXWriteAttempt {
+        var selectedText: String
+        var decision: String
+        var rereadCount: Int
+        var replaceRan: Bool
+        var accepted: Bool
+    }
+
+    /// Stops after a write that reported success. `.unverified` is not a
+    /// reason to type the text again: the captured node may be stale while
+    /// the live field already contains the insert.
+    private func finishAXAttempt(_ attempt: AXWriteAttempt,
+                                 text: String,
+                                 element: AXUIElement,
+                                 previousValue: String?,
+                                 method: InsertionMethod,
+                                 mayPressEnter: Bool,
+                                 attempts: Int,
+                                 target: (name: String, bundleID: String?),
+                                 label: String) -> InsertionResult? {
+        let verification: AXReadbackVerification
+        let verifyLog: String
+        if attempt.accepted {
+            switch verifyInsertion(text, element: element, previousValue: previousValue) {
+            case .verified:
+                verification = .verified
+                verifyLog = "verified"
+            case .unreadable:
+                verification = .unreadable
+                verifyLog = "unreadable"
+            case .unverified:
+                verification = .unverified
+                verifyLog = "unverified"
+            }
+        } else {
+            verification = .unverified
+            verifyLog = "skipped"
+        }
+        switch AXInsertionPolicy.afterWrite(accepted: attempt.accepted, verification: verification) {
+        case .stop(let verified):
+            logInsertion("\(label): selectedText=\(attempt.selectedText) decision=\(attempt.decision) rereads=\(attempt.rereadCount) replace=\(attempt.replaceRan) verify=\(verifyLog) fallback=none")
+            if mayPressEnter, verified || verifyLog == "unreadable" {
+                sendEnter()
+            }
+            return result(method: method, verified: verified, attempts: attempts, target: target)
+        case .nextStrategy(let reason):
+            logInsertion("\(label): selectedText=\(attempt.selectedText) decision=\(attempt.decision) rereads=\(attempt.rereadCount) replace=\(attempt.replaceRan) verify=\(verifyLog) fallback=\(reason)")
+            return nil
+        }
+    }
+
+    private func tryAXInsertion(_ text: String,
+                                element: AXUIElement,
+                                trustSuccessDespiteUnchangedReadback: Bool) async -> AXWriteAttempt {
         // No caret range means this element cannot take AXSelectedText.
         // The whole-value write is the only accessibility insert available.
         guard selectedRange(in: element) != nil else {
-            return replaceAXValue(text, element: element)
+            let replaced = replaceAXValue(text, element: element)
+            return AXWriteAttempt(selectedText: "skipped",
+                                 decision: "none",
+                                 rereadCount: 0,
+                                 replaceRan: true,
+                                 accepted: replaced)
         }
 
         let before = stringValue(in: element)
         let wrote = AXUIElementSetAttributeValue(element,
                                                  kAXSelectedTextAttribute as CFString,
                                                  text as CFTypeRef) == .success
-        let decision = await AXInsertionPolicy.resolve(setSucceeded: wrote, valueBefore: before) { sampleIndex in
+        if AXInsertionPolicy.followUpAfterSelectedTextSet(
+            setSucceeded: wrote,
+            trustSuccessDespiteUnchangedReadback: trustSuccessDespiteUnchangedReadback
+        ) == .acceptWithoutProof {
+            return AXWriteAttempt(selectedText: "success",
+                                 decision: AXInsertionDecision.acceptSelectedText.logName,
+                                 rereadCount: 0,
+                                 replaceRan: false,
+                                 accepted: true)
+        }
+
+        let resolution = await AXInsertionPolicy.resolveTracing(setSucceeded: wrote, valueBefore: before) { sampleIndex in
             if sampleIndex > 0 {
                 try? await Task.sleep(nanoseconds: AXInsertionPolicy.recheckIntervalNanoseconds)
             }
@@ -673,17 +751,50 @@ final class TextInsertionService {
         }
         // Only a terminal "the write did not land" decision may write again.
         // A leaked recheck is not permission to insert a second copy.
-        guard decision == .replaceWholeValue else {
-            return true
+        if resolution.decision != .replaceWholeValue {
+            return AXWriteAttempt(selectedText: wrote ? "success" : "failed",
+                                 decision: resolution.decision.logName,
+                                 rereadCount: resolution.rereadCount,
+                                 replaceRan: false,
+                                 accepted: true)
         }
-        // Chromium can apply the first write after the last scheduled
-        // sample. Replacing AXValue at that point inserts the text twice.
+        // The value can change between the last sample and this read.
         if wrote,
            !AXInsertionPolicy.shouldReplaceWholeValue(valueBefore: before,
                                                       valueNow: stringValue(in: element)) {
-            return true
+            return AXWriteAttempt(selectedText: "success",
+                                 decision: resolution.decision.logName,
+                                 rereadCount: resolution.rereadCount,
+                                 replaceRan: false,
+                                 accepted: true)
         }
-        return replaceAXValue(text, element: element)
+        let replaced = replaceAXValue(text, element: element)
+        // A selected-text call that already returned success must not be
+        // followed by another strategy, even when the whole-value set fails.
+        return AXWriteAttempt(selectedText: wrote ? "success" : "failed",
+                             decision: resolution.decision.logName,
+                             rereadCount: resolution.rereadCount,
+                             replaceRan: true,
+                             accepted: replaced || wrote)
+    }
+
+    private func isElectronApp(processIdentifier: pid_t?) -> Bool {
+        let candidates = [
+            processIdentifier.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleURL },
+            NSWorkspace.shared.frontmostApplication?.bundleURL
+        ]
+        for bundleURL in candidates {
+            guard let bundleURL else { continue }
+            if ElectronAppDetection.isElectronBundle(bundlePath: bundleURL.path,
+                                                     frameworkExists: { FileManager.default.fileExists(atPath: $0) }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func logInsertion(_ message: String) {
+        DiagnosticsLog.shared.write("insertion \(message)")
     }
 
     private func spacingAdjusted(_ text: String, focused: AXUIElement?) -> String {

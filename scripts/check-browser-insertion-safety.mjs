@@ -45,11 +45,11 @@ const refreshBody = context.slice(context.indexOf("private func scheduleRefreshI
 assert(refreshBody.includes("DispatchQueue.global"), "browser URL refresh is not offloaded from the caller path");
 
 const preparedMarker = "let browserTarget = isBrowserApp()";
-const browserBlockMarker = "if browserTarget {";
+const browserBlockMarker = "if browserTarget || electronTarget {";
 const focusedAXMarker = "if let focused {";
 const insertionCandidatesMarker = "for candidate in insertionCandidates";
 assert(insertion.includes(preparedMarker), "insertion does not classify browser target before spacing adjustment");
-assert(insertion.includes("if !browserTarget {\n            focused = focusedElement()\n        }"), "browser insertion can read focused AX element before typed events");
+assert(insertion.includes("if !typedEventTarget {\n            focused = focusedElement()\n        }"), "browser and Electron insertion can read the focused AX element before typed events");
 const browserBlockIndex = insertion.indexOf(browserBlockMarker);
 const focusedAXIndex = insertion.indexOf(focusedAXMarker);
 const insertionCandidatesIndex = insertion.indexOf(insertionCandidatesMarker);

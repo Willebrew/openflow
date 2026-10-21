@@ -56,6 +56,7 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v swift >/dev/null 2>&1; then
   AX_INSERTION_BIN="$(mktemp /tmp/openflow-ax-insertion-check.XXXXXX)"
   swiftc \
     "$ROOT/openflow/Services/AXInsertionPolicy.swift" \
+    "$ROOT/openflow/Services/ElectronAppDetection.swift" \
     "$ROOT/scripts/check-ax-insertion-policy.swift" \
     -o "$AX_INSERTION_BIN"
   "$AX_INSERTION_BIN"

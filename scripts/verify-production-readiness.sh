@@ -230,6 +230,7 @@ AX_INSERTION_CHECK="$(mktemp /tmp/openflow-ax-insertion-check.XXXXXX)"
 xcrun --sdk macosx swiftc -sdk "$SDK" \
   -target arm64-apple-macos14.0 \
   openflow/Services/AXInsertionPolicy.swift \
+  openflow/Services/ElectronAppDetection.swift \
   scripts/check-ax-insertion-policy.swift \
   -o "$AX_INSERTION_CHECK"
 "$AX_INSERTION_CHECK"

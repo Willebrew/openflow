@@ -13,6 +13,11 @@ struct CheckAXInsertionPolicy {
         await testFinalUnchangedSampleReplaces()
         await testChangeOnFinalSampleAccepts()
         testWholeValueGate()
+        await testCapturedReadbackNeverChangesButWriteLanded()
+        testMapsStillReplacesWhenTheWriteDidNotLand()
+        testUnverifiedSuccessDoesNotStartAnotherStrategy()
+        testFailedWriteMayTryNextStrategy()
+        testElectronFrameworkDetection()
         print("ax insertion policy checks passed")
     }
 
@@ -128,6 +133,115 @@ struct CheckAXInsertionPolicy {
         }
         expect(decision == .acceptSelectedText, "a change on the final sample must be accepted")
         expect(reads.count == sampleCount, "the final sample must still be read")
+    }
+
+    private static func testCapturedReadbackNeverChangesButWriteLanded() async {
+        let stale = Array(repeating: "Hello", count: AXInsertionPolicy.maxDelayedSamples + 2)
+        var reads = 0
+        let naive = await AXInsertionPolicy.resolve(setSucceeded: true, valueBefore: "Hello") { _ in
+            reads += 1
+            return stale[0]
+        }
+        expect(naive == .replaceWholeValue, "a constant captured value used to demand a second write")
+        expect(reads == AXInsertionPolicy.maxDelayedSamples + 1, "the old readback loop exhausts every sample")
+
+        let trace = AXInsertionPolicy.traceCapturedInsertion(
+            valueBefore: "Hello",
+            readbacks: stale,
+            selectedTextSetSucceeded: true,
+            trustSuccessDespiteUnchangedReadback: true,
+            wholeValueSetSucceeded: true,
+            wholeValueReadback: "Hello"
+        )
+        expect(trace.totalWrites == 1, "a landed write whose captured readback never changes must be the only write")
+        expect(trace.selectedTextWrites == 1, "the selected-text call is the one write")
+        expect(trace.wholeValueWrites == 0, "AXValue must not be replaced when the captured node stays constant")
+        expect(trace.rereadCount == 0, "a constant captured node must not be reread")
+        expect(!trace.startedFallback, "no fallback strategy may run after the write landed")
+        expect(trace.fallbackReason == "none", "fallback reason stays empty when the attempt stops")
+    }
+
+    private static func testMapsStillReplacesWhenTheWriteDidNotLand() {
+        let trace = AXInsertionPolicy.traceCapturedInsertion(
+            valueBefore: "Search",
+            readbacks: Array(repeating: "Search", count: 8),
+            selectedTextSetSucceeded: true,
+            trustSuccessDespiteUnchangedReadback: false,
+            wholeValueSetSucceeded: true,
+            wholeValueReadback: "Search maps"
+        )
+        expect(trace.wholeValueWrites == 1, "Maps still replaces AXValue when the selected-text write is dropped")
+        expect(trace.verify == "verified", "the whole-value write is visible on a native field")
+        expect(!trace.startedFallback, "Maps does not continue into another insertion strategy")
+    }
+
+    private static func testUnverifiedSuccessDoesNotStartAnotherStrategy() {
+        let follow = AXInsertionPolicy.afterWrite(accepted: true, verification: .unverified)
+        guard case .stop(let verified) = follow else {
+            expect(false, "unverified success must stop")
+            return
+        }
+        expect(!verified, "an unverified successful write is reported unverified")
+
+        let trace = AXInsertionPolicy.traceCapturedInsertion(
+            valueBefore: "Hello",
+            readbacks: Array(repeating: "Hello", count: 8),
+            selectedTextSetSucceeded: true,
+            trustSuccessDespiteUnchangedReadback: false,
+            wholeValueSetSucceeded: true,
+            wholeValueReadback: "Hello"
+        )
+        expect(!trace.startedFallback, "an unchanged readback after a successful write must not fall back")
+        expect(trace.fallbackReason == "none", "stopping is not a fallback")
+    }
+
+    private static func testFailedWriteMayTryNextStrategy() {
+        let follow = AXInsertionPolicy.afterWrite(accepted: false, verification: .unverified)
+        guard case .nextStrategy(let reason) = follow else {
+            expect(false, "a failed write may try the next strategy")
+            return
+        }
+        expect(reason == "write call failed", "fallback reason names the failed write")
+
+        let trace = AXInsertionPolicy.traceCapturedInsertion(
+            valueBefore: "Search",
+            readbacks: Array(repeating: "Search", count: 4),
+            selectedTextSetSucceeded: false,
+            trustSuccessDespiteUnchangedReadback: false,
+            wholeValueSetSucceeded: false,
+            wholeValueReadback: "Search"
+        )
+        expect(trace.startedFallback, "Maps can still leave the accessibility path when both writes fail")
+        expect(trace.fallbackReason == "write call failed", "the fallback reason is the failed write")
+    }
+
+    private static func testElectronFrameworkDetection() {
+        let app = "/Applications/Grok Bot.app"
+        expect(
+            ElectronAppDetection.isElectronBundle(bundlePath: app) { candidate in
+                candidate == ElectronAppDetection.frameworkPath(bundlePath: app)
+            },
+            "a bundle that contains Electron Framework.framework is Electron"
+        )
+
+        let helper = "/Applications/Grok Bot.app/Contents/Frameworks/Grok Bot Helper.app"
+        let hostFramework = ElectronAppDetection.frameworkPath(bundlePath: app)
+        expect(
+            ElectronAppDetection.isElectronBundle(bundlePath: helper) { $0 == hostFramework },
+            "a nested Electron helper still resolves the host framework"
+        )
+        expect(
+            !ElectronAppDetection.isElectronBundle(bundlePath: "/System/Applications/Notes.app") { _ in false },
+            "Notes is not Electron"
+        )
+        expect(
+            !ElectronAppDetection.isElectronBundle(bundlePath: "/Applications/Safari.app") { _ in false },
+            "Safari is not Electron"
+        )
+        expect(
+            !ElectronAppDetection.isElectronBundle(bundlePath: "") { _ in true },
+            "an empty bundle path is not Electron"
+        )
     }
 
     private static func testWholeValueGate() {

@@ -31,7 +31,7 @@ REQUIRE_MANUAL_INSERTION_REGRESSION=1 scripts/check-local-release-gate.sh
 | Messages | Unicode events, AX if available | Verified when readable |
 | Mail | AX focused/descendant | Verified when readable |
 | Notes / TextEdit | Focused AX | Verified. The dictated text appears once. |
-| Electron / Chromium host that is not a browser bundle | Focused AX | Verified once the value readback updates. The dictated text appears once. |
+| Electron host (Electron Framework.framework, for example Grok Bot) | Native key events, Unicode events | One insert. The captured accessibility value is not read back. |
 | Cursor/VS Code editor | Native key events, Unicode events | Usually unverified |
 
 Failure criteria:
