@@ -688,8 +688,40 @@ final class OpenFlowCloudService {
     }
 
     private func send<Response: Decodable>(_ request: URLRequest) async throws -> Response {
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await dataForLoadProbe {
+            try await session.data(for: request)
+        }
         return try decode(data: data, response: response)
+    }
+
+    /// Times a backend call and, when it is slow or fails, asks for a load-status
+    /// refresh. Cancellation is ignored so teardown does not look like an outage.
+    private func dataForLoadProbe(
+        _ work: () async throws -> (Data, URLResponse)
+    ) async throws -> (Data, URLResponse) {
+        let started = Date()
+        do {
+            let result = try await work()
+            noteLoadProbe(
+                started: started,
+                statusCode: (result.1 as? HTTPURLResponse)?.statusCode,
+                transportFailed: false
+            )
+            return result
+        } catch {
+            if !BackendLoadSignals.isCancellation(error) {
+                noteLoadProbe(started: started, statusCode: nil, transportFailed: true)
+            }
+            throw error
+        }
+    }
+
+    private func noteLoadProbe(started: Date, statusCode: Int?, transportFailed: Bool) {
+        BackendLoadSignals.note(
+            duration: Date().timeIntervalSince(started),
+            statusCode: statusCode,
+            transportFailed: transportFailed
+        )
     }
 
     private func decode<Response: Decodable>(data: Data,
@@ -770,7 +802,10 @@ final class OpenFlowCloudService {
             }
             request.setValue(token, forHTTPHeaderField: header)
         }
-        let (data, response) = try await session.upload(for: request, fromFile: audioURL)
+        let uploadRequest = request
+        let (data, response) = try await dataForLoadProbe {
+            try await session.upload(for: uploadRequest, fromFile: audioURL)
+        }
         guard let http = response as? HTTPURLResponse else {
             throw OpenflowError.cloudProviderUnavailable("No upload response.")
         }
@@ -787,7 +822,10 @@ final class OpenFlowCloudService {
         let timingID = UUID().uuidString.lowercased()
         var timed = request
         timed.setValue(timingID, forHTTPHeaderField: "X-Openflow-Timing-ID")
-        let (data, response) = try await session.upload(for: timed, fromFile: fileURL)
+        let timedRequest = timed
+        let (data, response) = try await dataForLoadProbe {
+            try await session.upload(for: timedRequest, fromFile: fileURL)
+        }
         let metrics = await Self.defaultRedirectDelegate.takeMetrics(id: timingID)
         return (data, response, metrics)
     }

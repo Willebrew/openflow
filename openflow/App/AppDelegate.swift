@@ -11,6 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         OpenflowHubWindowRestorer.install()
         coordinator.start()
         UpdateService.shared.start()
+        BackendLoadMonitor.shared.start { [weak self] in
+            self?.coordinator.settings.cloudBaseURL ?? ""
+        }
         Task { @MainActor in
             await coordinator.validateCloudSessionAtLaunch()
             if needsInteractiveOnboarding {
@@ -25,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         UpdateService.shared.stop()
+        BackendLoadMonitor.shared.stop()
         coordinator.stop()
     }
 

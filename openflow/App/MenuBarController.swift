@@ -79,6 +79,14 @@ final class MenuBarController: NSObject {
                 }
             }
             .store(in: &cancellables)
+        BackendLoadMonitor.shared.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    self?.configureMenu()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     private func installStatusItem() {
@@ -87,9 +95,9 @@ final class MenuBarController: NSObject {
         }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
+        guard item.button != nil else { return }
+        applyStatusButtonChrome()
         guard let button = item.button else { return }
-        button.image = .openflowStatusIcon
-        button.imagePosition = .imageOnly
         button.target = self
         button.action = #selector(showStatusMenu(_:))
         button.sendAction(on: .leftMouseDown)
@@ -105,9 +113,17 @@ final class MenuBarController: NSObject {
         }
     }
 
+    private func applyStatusButtonChrome() {
+        guard let button = statusItem?.button else { return }
+        let notice = BackendLoadMonitor.shared.notice
+        button.image = .openflowStatusIcon
+        button.imagePosition = .imageOnly
+        button.toolTip = notice.text
+        button.setAccessibilityLabel(notice.accessibilityLabel)
+    }
+
     private func configureMenu() {
-        statusItem?.button?.image = .openflowStatusIcon
-        statusItem?.button?.imagePosition = .imageOnly
+        applyStatusButtonChrome()
 
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -143,6 +159,12 @@ final class MenuBarController: NSObject {
             menu.addItem(item)
         default:
             break
+        }
+        if let loadText = BackendLoadMonitor.shared.notice.text {
+            menu.addItem(.separator())
+            let item = NSMenuItem(title: loadText, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
         }
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit openflow", action: #selector(quit), keyEquivalent: "q"))

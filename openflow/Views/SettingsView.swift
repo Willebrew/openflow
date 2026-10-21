@@ -47,6 +47,7 @@ struct SettingsView: View {
     @EnvironmentObject private var cloudAccount: CloudAccountStore
     @EnvironmentObject private var audioRoute: AudioRouteStore
     @ObservedObject private var updater = UpdateService.shared
+    @ObservedObject private var backendLoad = BackendLoadMonitor.shared
     @State private var selectedTab: SettingsTab
     @State private var settingsTab: SettingsDetailTab = .general
     @State private var apiKey = ""
@@ -148,6 +149,9 @@ struct SettingsView: View {
                 Text("openflow")
                     .font(.system(size: 20, weight: .heavy))
                     .foregroundStyle(FlowUI.ink)
+                Spacer(minLength: 12)
+                BackendLoadBanner(notice: backendLoad.notice)
+                    .animation(.easeInOut(duration: 0.25), value: backendLoad.notice)
             }
 
             HStack(spacing: 8) {
