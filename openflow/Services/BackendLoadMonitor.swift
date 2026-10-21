@@ -227,7 +227,7 @@ final class BackendLoadMonitor: ObservableObject {
         }
     }
 
-    private static func makeSession() -> URLSession {
+    nonisolated private static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 8
         config.timeoutIntervalForResource = 8
