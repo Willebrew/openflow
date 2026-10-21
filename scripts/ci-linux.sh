@@ -60,6 +60,13 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v swift >/dev/null 2>&1; then
     -o "$POLICY_BIN"
   "$POLICY_BIN"
   rm -f "$POLICY_BIN"
+  LOAD_STATUS_BIN="$(mktemp /tmp/openflow-load-status-check.XXXXXX)"
+  swiftc \
+    "$ROOT/openflow/Services/BackendLoadStatus.swift" \
+    "$ROOT/scripts/check-backend-load-status.swift" \
+    -o "$LOAD_STATUS_BIN"
+  "$LOAD_STATUS_BIN"
+  rm -f "$LOAD_STATUS_BIN"
 else
   echo "skipping Swift contract checks (macOS only)"
 fi

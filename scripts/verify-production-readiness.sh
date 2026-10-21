@@ -258,6 +258,7 @@ xcrun --sdk macosx swiftc -sdk "$SDK" \
   openflow/Services/CloudURLPolicy.swift \
   openflow/Services/CloudSessionValidator.swift \
   openflow/Services/AudioFileFormat.swift \
+  openflow/Services/BackendLoadStatus.swift \
   openflow/Services/OpenFlowCloudService.swift \
   openflow/Services/OpenFlowProviderRouting.swift \
   openflow/Services/CommandSubmissionPolicy.swift \
@@ -312,5 +313,14 @@ xcrun --sdk macosx swiftc -sdk "$SDK" \
   -o "$HOTKEY_POLICY_CHECK"
 "$HOTKEY_POLICY_CHECK"
 rm -f "$HOTKEY_POLICY_CHECK"
+
+LOAD_STATUS_CHECK="$(mktemp /tmp/openflow-load-status-check.XXXXXX)"
+xcrun --sdk macosx swiftc -sdk "$SDK" \
+  -target arm64-apple-macos14.0 \
+  openflow/Services/BackendLoadStatus.swift \
+  scripts/check-backend-load-status.swift \
+  -o "$LOAD_STATUS_CHECK"
+"$LOAD_STATUS_CHECK"
+rm -f "$LOAD_STATUS_CHECK"
 
 echo "production readiness static checks passed"

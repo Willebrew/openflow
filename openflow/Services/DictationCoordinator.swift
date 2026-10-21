@@ -329,6 +329,7 @@ final class DictationCoordinator: ObservableObject {
         do {
             let newSession = DictationSession(mode: mode)
             session = newSession
+            BackendLoadMonitor.shared.noteUserActivity()
             pillViewModel.state = .recording
             pillViewModel.subtitle = "Listening"
             revealPill()
@@ -597,6 +598,7 @@ final class DictationCoordinator: ObservableObject {
 
     func endDictation() {
         guard var activeSession = session else { return }
+        BackendLoadMonitor.shared.noteUserActivity()
         cancelRecordingLimit()
         session = nil
         processingSessionID = activeSession.id
