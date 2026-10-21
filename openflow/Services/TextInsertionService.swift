@@ -269,7 +269,7 @@ final class TextInsertionService {
             attempts += 1
             let candidatePrepared = spacingAdjusted(text, focused: focused)
             let before = stringValue(in: focused)
-            if tryAXInsertion(candidatePrepared, element: focused) {
+            if await tryAXInsertion(candidatePrepared, element: focused) {
                 switch verifyInsertion(candidatePrepared, element: focused, previousValue: before) {
                 case .verified:
                     if mayPressEnter { sendEnter() }
@@ -299,7 +299,7 @@ final class TextInsertionService {
             let candidatePrepared = spacingAdjusted(text, focused: candidate)
             let before = stringValue(in: candidate)
             attempts += 1
-            if tryAXInsertion(candidatePrepared, element: candidate) {
+            if await tryAXInsertion(candidatePrepared, element: candidate) {
                 switch verifyInsertion(candidatePrepared, element: candidate, previousValue: before) {
                 case .verified:
                     if mayPressEnter { sendEnter() }
@@ -390,7 +390,7 @@ final class TextInsertionService {
         }
         if !isBrowserApp() {
             let before = stringValue(in: element)
-            if tryAXInsertion(prepared, element: element) {
+            if await tryAXInsertion(prepared, element: element) {
                 switch verifyInsertion(prepared, element: element, previousValue: before) {
                 case .verified:
                     if pressEnter, submitConfirmationReason == nil { sendEnter() }
@@ -654,17 +654,34 @@ final class TextInsertionService {
         try? await Task.sleep(nanoseconds: 70_000_000)
     }
 
-    private func tryAXInsertion(_ text: String, element: AXUIElement) -> Bool {
-        if selectedRange(in: element) != nil {
-            // Some fields (SwiftUI search fields e.g. Maps) answer .success on
-            // AXSelectedText writes they drop entirely, so only trust the
-            // write when the readable value changed. Elements whose value
-            // cannot be read at all keep the benefit of the doubt - a retry
-            // there could double-type text that did land.
-            let before = stringValue(in: element)
-            let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
-            if result == .success,
-               before == nil || stringValue(in: element) != before { return true }
+    private func tryAXInsertion(_ text: String, element: AXUIElement) async -> Bool {
+        // No caret range means this element cannot take AXSelectedText.
+        // The whole-value write is the only accessibility insert available.
+        guard selectedRange(in: element) != nil else {
+            return replaceAXValue(text, element: element)
+        }
+
+        let before = stringValue(in: element)
+        let wrote = AXUIElementSetAttributeValue(element,
+                                                 kAXSelectedTextAttribute as CFString,
+                                                 text as CFTypeRef) == .success
+        let decision = await AXInsertionPolicy.resolve(setSucceeded: wrote, valueBefore: before) { sampleIndex in
+            if sampleIndex > 0 {
+                try? await Task.sleep(nanoseconds: AXInsertionPolicy.recheckIntervalNanoseconds)
+            }
+            return stringValue(in: element)
+        }
+        // Only a terminal "the write did not land" decision may write again.
+        // A leaked recheck is not permission to insert a second copy.
+        guard decision == .replaceWholeValue else {
+            return true
+        }
+        // Chromium can apply the first write after the last scheduled
+        // sample. Replacing AXValue at that point inserts the text twice.
+        if wrote,
+           !AXInsertionPolicy.shouldReplaceWholeValue(valueBefore: before,
+                                                      valueNow: stringValue(in: element)) {
+            return true
         }
         return replaceAXValue(text, element: element)
     }

@@ -170,6 +170,7 @@ settings_direct_opens="$(
 [[ "${settings_direct_opens:-0}" == "1" ]] ||
   fail "settings may only open the local diagnostics folder directly"
 node scripts/check-browser-insertion-safety.mjs
+node scripts/check-ax-insertion-safety.mjs
 node scripts/check-audio-capture-safety.mjs
 node scripts/check-hotkey-text-input-safety.mjs
 node scripts/check-permissions-flow-safety.mjs
@@ -224,6 +225,15 @@ xcrun --sdk macosx swiftc -sdk "$SDK" \
   -o "$INSERTION_PREP_CHECK"
 "$INSERTION_PREP_CHECK"
 rm -f "$INSERTION_PREP_CHECK"
+
+AX_INSERTION_CHECK="$(mktemp /tmp/openflow-ax-insertion-check.XXXXXX)"
+xcrun --sdk macosx swiftc -sdk "$SDK" \
+  -target arm64-apple-macos14.0 \
+  openflow/Services/AXInsertionPolicy.swift \
+  scripts/check-ax-insertion-policy.swift \
+  -o "$AX_INSERTION_CHECK"
+"$AX_INSERTION_CHECK"
+rm -f "$AX_INSERTION_CHECK"
 
 HISTORY_PRIVACY_CHECK="$(mktemp /tmp/openflow-history-privacy-check.XXXXXX)"
 xcrun --sdk macosx swiftc -sdk "$SDK" \
