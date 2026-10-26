@@ -119,6 +119,8 @@ The production site URL is configured in `UserSettings`. Routes include:
 - `POST /openflow/generate-style` (Pro only on the server-key path)
 - `POST /openflow/billing/checkout`
 - `POST /openflow/billing/portal`
+- `GET /status/load` (unauthenticated; `BackendLoadMonitor` polls it while the
+  app is awake -- see [backend-load.md](backend-load.md))
 
 `POST /openflow/generate-style` is Pro-only on the server-key path. Free
 accounts write a style themselves. A stored BYO Groq key generates on the Mac

@@ -34,6 +34,15 @@ REQUIRE_MANUAL_INSERTION_REGRESSION=1 scripts/check-local-release-gate.sh
 | Electron host (Electron Framework.framework, for example Grok Bot) | Native key events, Unicode events | One insert. The captured accessibility value is not read back. |
 | Cursor/VS Code editor | Native key events, Unicode events | Usually unverified |
 
+Electron targets are detected by bundle layout, not bundle ID: `ElectronAppDetection`
+looks for `Contents/Frameworks/Electron Framework.framework` in the target bundle and
+its ancestors (Grok Bot ships as `com.anysphere.sand`). Electron hosts take the keyboard
+path and never reach the AX strategies, so their captured nodes are not read back as
+proof. For every target, a write call that reports success ends the attempt -- an
+unverified or unreadable result does not start another strategy, because the text may
+already be in the live field. `scripts/check-ax-insertion-policy.swift` and
+`scripts/check-ax-insertion-safety.mjs` pin these rules.
+
 Failure criteria:
 
 - History shows transcription success but insertion failure with no method.
