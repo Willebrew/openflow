@@ -29,12 +29,7 @@ final class CleanupFormattingService {
         }
 
         let normalized = rawTranscript.lowercased()
-        let correctionMarkers = [
-            "scratch that", "strike that", "delete that", "ignore that",
-            "actually make that", "make that", "change that to",
-            "i mean", "no, use", "no use"
-        ]
-        if correctionMarkers.contains(where: normalized.contains) {
+        if CleanupLengthGuard.selfCorrectionMarkers.contains(where: normalized.contains) {
             return true
         }
 
@@ -102,6 +97,11 @@ final class CleanupFormattingService {
                                                  context: context,
                                                  settings: settings,
                                                  baseURL: baseURL)
+            guard CleanupLengthGuard.passes(cleaned: result.text,
+                                            raw: preparedRawTranscript,
+                                            allowsExpansion: allowsExpansion(context: context)) else {
+                return localFallback(rawTranscript: preparedRawTranscript, context: context, settings: settings)
+            }
             result.text = formatted(result.text,
                                     context: context,
                                     settings: settings,
@@ -131,6 +131,11 @@ final class CleanupFormattingService {
         let content = decoded.choices.first?.message.content ?? ""
         if let result = parseCleanupJSON(content) {
             var cleaned = sanitize(result, fallback: preparedRawTranscript)
+            guard CleanupLengthGuard.passes(cleaned: cleaned.text,
+                                            raw: preparedRawTranscript,
+                                            allowsExpansion: allowsExpansion(context: context)) else {
+                return localFallback(rawTranscript: preparedRawTranscript, context: context, settings: settings)
+            }
             cleaned.text = formatted(cleaned.text,
                                      context: context,
                                      settings: settings,
@@ -141,6 +146,11 @@ final class CleanupFormattingService {
                                       pressEnter: false,
                                       confidence: 0.4,
                                       notes: "Recovered from non-JSON cleanup response")
+        guard CleanupLengthGuard.passes(cleaned: recovered.text,
+                                        raw: preparedRawTranscript,
+                                        allowsExpansion: allowsExpansion(context: context)) else {
+            return localFallback(rawTranscript: preparedRawTranscript, context: context, settings: settings)
+        }
         recovered.text = formatted(recovered.text,
                                    context: context,
                                    settings: settings,
@@ -271,6 +281,13 @@ final class CleanupFormattingService {
         return content.trimmingCharacters(in: CharacterSet(charactersIn: "\" \n\t")).isEmpty ? fallback : content
     }
 
+    /// Letter and custom styles intentionally rewrite a short utterance into
+    /// a longer document, so the expansion side of the length guard does not
+    /// apply to them; truncation still does.
+    private func allowsExpansion(context: FormattingContext) -> Bool {
+        context.usesCustomStyle || context.stylePreset == .emailLetter
+    }
+
     private func sanitize(_ result: CleanupResult, fallback: String) -> CleanupResult {
         let internalFields = ["active_app", "bundle_id", "app_category", "browser_url", "selected_text", "nearby_text", "text_before", "text_after", "style_preset"]
         if internalFields.contains(where: { result.text.localizedCaseInsensitiveContains($0) }) {
@@ -290,6 +307,8 @@ final class CleanupFormattingService {
         if context.category != .terminal && context.stylePreset != .rawTranscript {
             result = SelfCorrectionFormatter.apply(to: result)
             result = ListFormatter.apply(result, context: context)
+            result = CasualMessagesFormatter.apply(result, context: context)
+            result = MidSentenceCasingFormatter.apply(result, textBefore: context.textBefore)
         }
         if context.stylePreset == .emailLetter {
             result = EmailLetterFormatter.apply(

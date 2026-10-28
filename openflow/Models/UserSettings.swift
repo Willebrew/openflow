@@ -406,7 +406,12 @@ final class UserSettings: ObservableObject {
             return inheritIfAuto(override.style)
         }
         switch kind {
-        case .personal: return inheritIfAuto(stylePreferences.personalMessages)
+        // Messages default to casual rather than the global default: an
+        // explicit preset or custom style stays authoritative, but Auto
+        // resolves to casual so texts are not punctuated like email.
+        case .personal:
+            let ref = stylePreferences.personalMessages
+            return ref.preset == .auto ? .preset(.casual) : ref
         case .work: return inheritIfAuto(stylePreferences.workMessages)
         case .email: return inheritIfAuto(stylePreferences.email)
         case .other: return defaultStyle
