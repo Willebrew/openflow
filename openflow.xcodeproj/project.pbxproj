@@ -8,6 +8,7 @@
 
 /* Begin PBXFileReference section */
 		97D71FCA2FD15A5F00016160 /* openflow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = openflow.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A50F3A010000000000000001 /* openflowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = openflowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +17,22 @@
 			path = openflow;
 			sourceTree = "<group>";
 		};
+		A50F3A010000000000000002 /* openflowTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = openflowTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		97D71FC72FD15A5F00016160 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A50F3A010000000000000004 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +46,7 @@
 			isa = PBXGroup;
 			children = (
 				97D71FCC2FD15A5F00016160 /* openflow */,
+				A50F3A010000000000000002 /* openflowTests */,
 				97D71FCB2FD15A5F00016160 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,11 +55,22 @@
 			isa = PBXGroup;
 			children = (
 				97D71FCA2FD15A5F00016160 /* openflow.app */,
+				A50F3A010000000000000001 /* openflowTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
+
+/* Begin PBXContainerItemProxy section */
+		A50F3A010000000000000009 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97D71FC22FD15A5F00016160 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 97D71FC92FD15A5F00016160;
+			remoteInfo = openflow;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXNativeTarget section */
 		97D71FC92FD15A5F00016160 /* openflow */ = {
@@ -70,6 +95,29 @@
 			productReference = 97D71FCA2FD15A5F00016160 /* openflow.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A50F3A010000000000000006 /* openflowTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A50F3A010000000000000007 /* Build configuration list for PBXNativeTarget "openflowTests" */;
+			buildPhases = (
+				A50F3A010000000000000003 /* Sources */,
+				A50F3A010000000000000004 /* Frameworks */,
+				A50F3A010000000000000005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A50F3A010000000000000008 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A50F3A010000000000000002 /* openflowTests */,
+			);
+			name = openflowTests;
+			packageProductDependencies = (
+			);
+			productName = openflowTests;
+			productReference = A50F3A010000000000000001 /* openflowTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -82,6 +130,10 @@
 				TargetAttributes = {
 					97D71FC92FD15A5F00016160 = {
 						CreatedOnToolsVersion = 26.5;
+					};
+					A50F3A010000000000000006 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = 97D71FC92FD15A5F00016160;
 					};
 				};
 			};
@@ -100,6 +152,7 @@
 			projectRoot = "";
 			targets = (
 				97D71FC92FD15A5F00016160 /* openflow */,
+				A50F3A010000000000000006 /* openflowTests */,
 			);
 		};
 /* End PBXProject section */
@@ -112,10 +165,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A50F3A010000000000000005 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		97D71FC62FD15A5F00016160 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A50F3A010000000000000003 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -323,6 +390,40 @@
 			};
 			name = Release;
 		};
+		A50F3A010000000000000010 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PXAS7J4XKW;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.neuroquestlabs.openflowTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/openflow.app/Contents/MacOS/openflow";
+			};
+			name = Debug;
+		};
+		A50F3A010000000000000011 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PXAS7J4XKW;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.neuroquestlabs.openflowTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/openflow.app/Contents/MacOS/openflow";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -344,7 +445,24 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A50F3A010000000000000007 /* Build configuration list for PBXNativeTarget "openflowTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A50F3A010000000000000010 /* Debug */,
+				A50F3A010000000000000011 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
+
+/* Begin PBXTargetDependency section */
+		A50F3A010000000000000008 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 97D71FC92FD15A5F00016160 /* openflow */;
+			targetProxy = A50F3A010000000000000009 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 	};
 	rootObject = 97D71FC22FD15A5F00016160 /* Project object */;
 }
