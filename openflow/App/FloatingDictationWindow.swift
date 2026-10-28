@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// Panel that can never take key or main status. If the pill became key it
+/// would steal focus from whatever the user is typing into -- including a
+/// Notification Center inline reply, whose send target is destroyed when it
+/// loses focus.
+private final class NonActivatingPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
 /// Floating pill HUD. WindowServer hits the full panel, so AppKit `hitTest`
 /// alone cannot click through. The panel stays a stable 380×64 slot so the
 /// SwiftUI hover animation can run, and `ignoresMouseEvents` is true unless
@@ -26,7 +35,7 @@ final class FloatingDictationWindow {
                 openSettings: { viewModel.openSettings?() }
             )
         )
-        window = NSPanel(
+        window = NonActivatingPanel(
             contentRect: NSRect(origin: .zero, size: Self.panelSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,

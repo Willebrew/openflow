@@ -126,6 +126,9 @@ final class ContextService {
         }
         if haystack.contains("codex") || haystack.contains("chatgpt") || haystack.contains("claude") || haystack.contains("openai.com") || haystack.contains("anthropic.com") { return .aiChat }
         if haystack.contains("mail") || haystack.contains("gmail") { return .email }
+        // Notification Center hosts banner inline replies (Messages, Slack,
+        // Reminders, FaceTime); those surfaces are casual message targets.
+        if haystack.contains("notificationcenter") || haystack.contains("usernotificationcenter") { return .messages }
         if haystack.contains("messages") || haystack.contains("slack") || haystack.contains("discord") || haystack.contains("whatsapp") { return .messages }
         if haystack.contains("docs.google") || haystack.contains("notion") || haystack.contains("notes") { return .docs }
         if haystack.contains("github") || haystack.contains("linear") || haystack.contains("jira") { return .projectManagement }

@@ -25,6 +25,12 @@ final class TextInsertionService {
         let target = targetDescription(processIdentifier: targetProcessIdentifier)
         var attempts = 0
         var failures: [String] = []
+        if let panel = nonActivatingPanelTarget(preferredProcessIdentifier: targetProcessIdentifier) {
+            return await insertIntoNonActivatingPanel(text,
+                                                      element: nil,
+                                                      pressEnter: pressEnter,
+                                                      target: panel)
+        }
         await restoreTargetApplication(processIdentifier: targetProcessIdentifier)
         if let targetProcessIdentifier,
            NSWorkspace.shared.frontmostApplication?.processIdentifier != targetProcessIdentifier {
@@ -352,6 +358,12 @@ final class TextInsertionService {
                 category: AppCategory = .generic,
                 targetProcessIdentifier: pid_t? = nil) async -> InsertionResult {
         let target = targetDescription(processIdentifier: targetProcessIdentifier)
+        if let panel = nonActivatingPanelTarget(preferredProcessIdentifier: targetProcessIdentifier) {
+            return await insertIntoNonActivatingPanel(text,
+                                                      element: element,
+                                                      pressEnter: pressEnter,
+                                                      target: panel)
+        }
         await restoreTargetApplication(processIdentifier: targetProcessIdentifier)
         if let targetProcessIdentifier,
            NSWorkspace.shared.frontmostApplication?.processIdentifier != targetProcessIdentifier {
@@ -436,6 +448,143 @@ final class TextInsertionService {
                         failureReason: nil,
                         targetApp: target.name,
                         targetBundleID: target.bundleID)
+    }
+
+    private struct NonActivatingPanelTarget {
+        var processIdentifier: pid_t
+        var bundleID: String?
+        var element: AXUIElement?
+        var name: String
+    }
+
+    /// Finds a non-activating panel target: a Notification Center inline
+    /// reply, or any non-frontmost process holding the system focused
+    /// element. The captured target pid is checked first so a session whose
+    /// context was captured as a panel still routes here even if the
+    /// system-focus read at insert time fails.
+    private func nonActivatingPanelTarget(preferredProcessIdentifier: pid_t?) -> NonActivatingPanelTarget? {
+        guard AXIsProcessTrusted() else { return nil }
+        if let preferredProcessIdentifier,
+           let app = NSRunningApplication(processIdentifier: preferredProcessIdentifier),
+           FocusedTargetPolicy.isNonActivatingPanelOwner(bundleID: app.bundleIdentifier) {
+            return NonActivatingPanelTarget(
+                processIdentifier: preferredProcessIdentifier,
+                bundleID: app.bundleIdentifier,
+                element: FocusedTargetResolver.systemFocusedElement(forProcess: preferredProcessIdentifier),
+                name: app.localizedName ?? "PID \(preferredProcessIdentifier)")
+        }
+        let resolved = FocusedTargetResolver.resolve(frontmostApp: NSWorkspace.shared.frontmostApplication)
+        guard resolved.isNonActivatingPanel,
+              let pid = resolved.processIdentifier else { return nil }
+        return NonActivatingPanelTarget(
+            processIdentifier: pid,
+            bundleID: resolved.runningApplication?.bundleIdentifier,
+            element: resolved.focusedElement,
+            name: resolved.runningApplication?.localizedName ?? "PID \(pid)")
+    }
+
+    /// Inserts into a non-activating panel. Activation of any kind is
+    /// forbidden -- activating the panel owner or restoring the previous
+    /// frontmost app drops key focus and dismisses the reply UI, so there is
+    /// no `restoreTargetApplication`, no `AXFrontmost`, and no window-chrome
+    /// click here. Return is never posted automatically either: a sent reply
+    /// cannot be unsent, so `pressEnter` is always suppressed.
+    private func insertIntoNonActivatingPanel(_ text: String,
+                                              element: AXUIElement?,
+                                              pressEnter: Bool,
+                                              target: NonActivatingPanelTarget) async -> InsertionResult {
+        let descriptor = (name: target.name, bundleID: target.bundleID)
+        var attempts = 0
+        var failures: [String] = []
+        releaseShortcutModifiers()
+        if pressEnter {
+            logInsertion("notification-panel: suppressed automatic Return")
+        }
+        let focused = element ?? target.element
+        let prepared = spacingAdjusted(text, focused: focused)
+        if prepared.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .failed(reason: "Nothing to insert; Return is never sent automatically into notification replies.",
+                           attemptCount: attempts,
+                           targetApp: descriptor.name,
+                           targetBundleID: descriptor.bundleID)
+        }
+        if let focused {
+            attempts += 1
+            let before = stringValue(in: focused)
+            let attempt = await tryAXInsertion(prepared,
+                                              element: focused,
+                                              trustSuccessDespiteUnchangedReadback: false)
+            if let finished = finishAXAttempt(attempt,
+                                              text: prepared,
+                                              element: focused,
+                                              previousValue: before,
+                                              method: .focusedAX,
+                                              mayPressEnter: false,
+                                              attempts: attempts,
+                                              target: descriptor,
+                                              label: "notification-panel") {
+                return finished
+            }
+            failures.append("AX selected-text insertion failed")
+        }
+        // Keyboard fallbacks post to the HID tap, which only reaches the key
+        // window. Before posting, confirm the panel still holds system focus
+        // or the text could land in an unrelated app after the reply closed.
+        guard FocusedTargetResolver.systemFocusedElement(forProcess: target.processIdentifier) != nil else {
+            failures.append("notification reply no longer holds focus")
+            return .failed(reason: failures.joined(separator: "; "),
+                           attemptCount: attempts,
+                           targetApp: descriptor.name,
+                           targetBundleID: descriptor.bundleID)
+        }
+        attempts += 1
+        if await typeTextWithKeyboardEvents(prepared) {
+            return result(method: .unicodeKeyEvents, verified: false, attempts: attempts, target: descriptor)
+        }
+        failures.append("unicode CGEvents failed")
+        attempts += 1
+        if await pasteTextViaPasteboardSwap(prepared) {
+            return result(method: .pasteboardPaste, verified: false, attempts: attempts, target: descriptor)
+        }
+        failures.append("pasteboard paste failed")
+        return .failed(reason: failures.joined(separator: "; "),
+                       attemptCount: attempts,
+                       targetApp: descriptor.name,
+                       targetBundleID: descriptor.bundleID)
+    }
+
+    /// Last-resort insert: clipboard swap. Prior pasteboard contents are
+    /// restored after a delay so the key panel has time to consume the
+    /// Cmd+V. Events go to the HID tap, not a pid, so they only reach the
+    /// key window.
+    private func pasteTextViaPasteboardSwap(_ text: String) async -> Bool {
+        let pasteboard = NSPasteboard.general
+        let savedItems: [NSPasteboardItem] = (pasteboard.pasteboardItems ?? []).map { original in
+            let copy = NSPasteboardItem()
+            for type in original.types {
+                if let data = original.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        }
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else { return false }
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true)
+        down?.flags = .maskCommand
+        let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
+        up?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+        // The panel reads the pasteboard asynchronously; restore too early
+        // and the paste pulls the old contents back.
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        if !savedItems.isEmpty {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(savedItems)
+        }
+        return true
     }
 
     private func targetDescription(processIdentifier: pid_t?) -> (name: String, bundleID: String?) {
