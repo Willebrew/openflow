@@ -10,13 +10,19 @@ final class TranscriptionService {
     private let provider: TranscriptionProvider
     private let keychain: KeychainService
     private let cloud: OpenFlowCloudService
+    private var warmUpGate = CloudWarmUpGate(minimumInterval: 60)
+    /// Sender used by `warmUp`; the default goes through the shared cloud
+    /// client so the warm ping reuses its URLSession. Swappable in tests.
+    var warmPing: (URL) -> Void
 
     init(provider: TranscriptionProvider? = nil,
          keychain: KeychainService? = nil,
          cloud: OpenFlowCloudService? = nil) {
         self.provider = provider ?? GroqTranscriptionProvider()
         self.keychain = keychain ?? .shared
-        self.cloud = cloud ?? OpenFlowCloudService()
+        let cloud = cloud ?? OpenFlowCloudService()
+        self.cloud = cloud
+        self.warmPing = { url in cloud.warm(baseURL: url) }
     }
 
     func transcribe(audioURL: URL,
@@ -60,8 +66,28 @@ final class TranscriptionService {
         }
     }
 
-    func warmUp(settings _: UserSettings) {
-        // Do not GET /entitlement. Session checks use NQL Auth. Cloud 401 revokes.
+    /// Called on hotkey press. Fires a throttled POST /openflow/warm that
+    /// primes server auth and the shared TLS/HTTP2 connection so the upload
+    /// that follows skips connection setup. The route may not exist on older
+    /// backends; every failure is ignored. Do not GET /entitlement. Session
+    /// checks use NQL Auth. Cloud 401 revokes.
+    func warmUp(settings: UserSettings) {
+        warmUp(settings: settings, now: Date(), hasLocalGroqKey: hasLocalGroqKey())
+    }
+
+    func warmUp(settings: UserSettings, now: Date, hasLocalGroqKey: Bool) {
+        guard OpenFlowProviderRouting.usesCloudTranscription(
+            providerMode: settings.providerMode,
+            hasLocalGroqKey: hasLocalGroqKey
+        ) else { return }
+        guard let baseURL = URL(string: settings.cloudBaseURL),
+              !settings.cloudBaseURL.isEmpty else { return }
+        guard warmUpGate.shouldWarm(now: now) else { return }
+        warmPing(baseURL)
+    }
+
+    private func hasLocalGroqKey() -> Bool {
+        (try? keychain.apiKey()).map { !$0.isEmpty } ?? false
     }
 
     private func retrying(_ operation: @escaping () async throws -> TranscriptionResult) async throws -> TranscriptionResult {
@@ -74,6 +100,25 @@ final class TranscriptionService {
             }
         }
         throw lastError ?? OpenflowError.transcriptionFailed("Unknown error")
+    }
+}
+
+/// Rate-limits warm pings to one per `minimumInterval`.
+struct CloudWarmUpGate {
+    let minimumInterval: TimeInterval
+    private(set) var lastWarmAt: Date?
+
+    init(minimumInterval: TimeInterval, lastWarmAt: Date? = nil) {
+        self.minimumInterval = minimumInterval
+        self.lastWarmAt = lastWarmAt
+    }
+
+    mutating func shouldWarm(now: Date) -> Bool {
+        if let lastWarmAt, now.timeIntervalSince(lastWarmAt) < minimumInterval {
+            return false
+        }
+        lastWarmAt = now
+        return true
     }
 }
 
