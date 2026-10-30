@@ -273,9 +273,17 @@ final class OpenFlowCloudService {
     private static let directUploadLimit = 8 * 1024 * 1024
     private static let uploadTokenHeader = "x-openflow-upload-token"
     private static let defaultRedirectDelegate = OpenFlowCloudRedirectDelegate()
-    private static let defaultSession = URLSession(configuration: .default,
-                                                   delegate: defaultRedirectDelegate,
-                                                   delegateQueue: nil)
+    /// One shared session for every cloud call (warm, transcribe, tickets) so
+    /// the TLS/HTTP2 connection established by a warm ping is reused by the
+    /// upload that follows. Ephemeral keeps auth state out of any cache.
+    private static let defaultSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpMaximumConnectionsPerHost = 2
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration,
+                          delegate: defaultRedirectDelegate,
+                          delegateQueue: nil)
+    }()
     private let keychain: KeychainService
     private let session: URLSession
     private let deviceID: String
@@ -335,17 +343,11 @@ final class OpenFlowCloudService {
                                                  bundleID: bundleID,
                                                  started: started)
         } catch {
-            if isMissingCloudRoute(error) {
-                if byteCount > 0, byteCount <= Self.directUploadLimit {
-                    return try await transcribeViaTicket(audioURL: audioURL,
-                                                         model: model,
-                                                         baseURL: baseURL,
-                                                         audioSeconds: audioSeconds,
-                                                         audioBytes: byteCount == Int.max ? 0 : byteCount,
-                                                         appName: appName,
-                                                         bundleID: bundleID,
-                                                         started: started)
-                }
+            // Normal-size clips must surface the error rather than detour
+            // through the ticket/storage path: the detour costs a second
+            // upload round trip and hides the real failure.
+            let isDirectSized = byteCount > 0 && byteCount <= Self.directUploadLimit
+            if isMissingCloudRoute(error), !isDirectSized {
                 return try await transcribeViaConvexStorage(audioURL: audioURL,
                                                             model: model,
                                                             baseURL: baseURL,
@@ -354,6 +356,27 @@ final class OpenFlowCloudService {
                                                             started: started)
             }
             throw error
+        }
+    }
+
+    /// Fire-and-forget POST /openflow/warm: primes server auth and reopens the
+    /// shared TLS/HTTP2 connection before a dictation upload. Never surfaces
+    /// errors; a 404 just means the backend predates the route.
+    func warm(baseURL: URL) {
+        guard let url = try? endpoint(path: "/openflow/warm", baseURL: baseURL) else { return }
+        var request = URLRequest(url: url, timeoutInterval: 5)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        do {
+            try authorize(&request)
+        } catch {
+            return
+        }
+        let session = self.session
+        let warmRequest = request
+        Task.detached(priority: .utility) {
+            _ = try? await session.data(for: warmRequest)
         }
     }
 
@@ -503,14 +526,16 @@ final class OpenFlowCloudService {
                                  forHTTPHeaderField: "X-Openflow-Cleanup-Context")
             }
         }
-        if let audioSeconds = audioDuration(at: audioURL) {
+        let audioSeconds = audioDuration(at: audioURL)
+        request.timeoutInterval = Self.transcribeTimeout(audioSeconds: audioSeconds ?? 0)
+        if let audioSeconds {
             request.setValue(String(format: "%.3f", audioSeconds),
                              forHTTPHeaderField: "X-Openflow-Audio-Seconds")
         }
         try authorize(&request)
 
         let uploadStarted = Date()
-        let (data, response, metrics) = try await timedUpload(request, fromFile: audioURL)
+        let (data, response, metrics) = try await timedUploadWithImmediateRetry(request, fromFile: audioURL)
         let decoded: OpenFlowCloudTranscriptionResponse = try decode(data: data, response: response)
         let hop = hopTimings(uploadStarted: uploadStarted,
                              metrics: metrics,
@@ -815,6 +840,37 @@ final class OpenFlowCloudService {
             )
         }
         return try JSONDecoder().decode(CloudAudioUploadResponse.self, from: data)
+    }
+
+    /// Short clips should not wait out the default 60s request timeout: the
+    /// budget scales with the audio (4s base + 0.25s per audio second, capped
+    /// at 30s). A timeout or a 5xx gets exactly one immediate retry -- no
+    /// backoff, since the failure mode is a cold backend, not congestion.
+    /// 401/4xx responses and non-timeout transport errors are not retried.
+    static func transcribeTimeout(audioSeconds: Double) -> TimeInterval {
+        min(30, 4 + 0.25 * max(0, audioSeconds))
+    }
+
+    static func isTimeoutError(_ error: Error) -> Bool {
+        (error as? URLError)?.code == .timedOut
+    }
+
+    private func timedUploadWithImmediateRetry(
+        _ request: URLRequest,
+        fromFile fileURL: URL
+    ) async throws -> (Data, URLResponse, URLSessionTaskMetrics?) {
+        do {
+            let first = try await timedUpload(request, fromFile: fileURL)
+            if let http = first.1 as? HTTPURLResponse, (500..<600).contains(http.statusCode) {
+                return try await timedUpload(request, fromFile: fileURL)
+            }
+            return first
+        } catch {
+            if Self.isTimeoutError(error) {
+                return try await timedUpload(request, fromFile: fileURL)
+            }
+            throw error
+        }
     }
 
     private func timedUpload(_ request: URLRequest,

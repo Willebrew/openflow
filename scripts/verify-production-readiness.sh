@@ -22,7 +22,7 @@ fi
 team_count="$(
   rg -c 'DEVELOPMENT_TEAM = PXAS7J4XKW;' openflow.xcodeproj/project.pbxproj || true
 )"
-[[ "$team_count" == "4" ]] ||
+[[ "$team_count" == "6" ]] ||
   fail "all project and target configurations must pin DEVELOPMENT_TEAM PXAS7J4XKW"
 
 if rg -n "pasteTextPreservingClipboard|clipboardPreservingSelectedTextFallback|sendCommandV|clipboard-bridge" openflow; then

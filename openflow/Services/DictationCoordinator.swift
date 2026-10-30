@@ -677,7 +677,8 @@ final class DictationCoordinator: ObservableObject {
                     bundleID: formattingContext.bundleID
                 )
                 transcribedResult = transcribed
-                log("raw transcript: \(transcribed.text)")
+                // Transcript content never lands in the debug log; sizes only.
+                log("raw transcript: \(transcribed.text.split(whereSeparator: \.isWhitespace).count) words \(transcribed.text.count) chars")
                 activeSession.metrics.uploadAndTranscriptionTime = transcribed.requestTime
                 activeSession.metrics.provider = transcribed.provider
                 activeSession.metrics.model = transcribed.model
@@ -743,6 +744,28 @@ final class DictationCoordinator: ObservableObject {
                                  formattingContext: FormattingContext,
                                  captured: CapturedAudio) async throws {
         var activeSession = session
+        // Whisper pads near-silent clips with stock phrases ("Thank you.");
+        // on short audio those are hallucinations -- show feedback and insert
+        // nothing instead of typing junk into the user's field.
+        if SilenceHallucinationFilter.isSilenceHallucination(text: transcribed.text,
+                                                             audioSeconds: captured.duration) {
+            log("ignored whisper silence hallucination: audio=\(ms(captured.duration)) chars=\(transcribed.text.count)")
+            DiagnosticsLog.shared.write("ignored silence hallucination: audio=\(ms(captured.duration)) chars=\(transcribed.text.count)")
+            OpenflowSignpost.endDictationPipeline(outcome: "no-speech")
+            diagnostics.currentMetrics = activeSession.metrics
+            pillViewModel.state = .error("No speech detected")
+            pillViewModel.subtitle = "No speech detected"
+            revealPill()
+            let sessionID = activeSession.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+                guard let self, self.processingSessionID == sessionID else { return }
+                self.processingSessionID = nil
+                self.resetPillToIdle()
+                self.pillViewModel.subtitle = "Ready"
+                self.applyPillVisibility()
+            }
+            return
+        }
         let cleanupStarted = Date()
         let cleaned: CleanupResult
         let usedRemoteCleanup: Bool
