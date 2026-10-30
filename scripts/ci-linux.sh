@@ -23,6 +23,7 @@ fi
 node "$ROOT/scripts/check-audio-capture-safety.mjs"
 node "$ROOT/scripts/check-browser-insertion-safety.mjs"
 node "$ROOT/scripts/check-ax-insertion-safety.mjs"
+node "$ROOT/scripts/check-notification-reply-insertion.mjs"
 node "$ROOT/scripts/check-hotkey-text-input-safety.mjs"
 node "$ROOT/scripts/check-permissions-flow-safety.mjs"
 node "$ROOT/scripts/check-history-ui-safety.mjs"
@@ -69,6 +70,13 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v swift >/dev/null 2>&1; then
     -o "$POLICY_BIN"
   "$POLICY_BIN"
   rm -f "$POLICY_BIN"
+  FOCUS_BIN="$(mktemp /tmp/openflow-focus-target-check.XXXXXX)"
+  swiftc \
+    "$ROOT/openflow/Services/FocusedTargetPolicy.swift" \
+    "$ROOT/scripts/check-focused-target-policy.swift" \
+    -o "$FOCUS_BIN"
+  "$FOCUS_BIN"
+  rm -f "$FOCUS_BIN"
   LOAD_STATUS_BIN="$(mktemp /tmp/openflow-load-status-check.XXXXXX)"
   swiftc \
     "$ROOT/openflow/Services/BackendLoadStatus.swift" \

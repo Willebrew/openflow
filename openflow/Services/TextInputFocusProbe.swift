@@ -40,6 +40,16 @@ enum TextInputFocusProbe {
 
     private static func accessibilityTextInputActive() -> Bool {
         guard AXIsProcessTrusted() else { return false }
+        // The system-wide focused element is authoritative: non-activating
+        // panels (Notification Center reply fields) hold it while their owner
+        // is never frontmost, so key input goes there, not to the frontmost
+        // app's focused element.
+        if let (element, pid) = FocusedTargetResolver.systemFocusedElement() {
+            if pid == ProcessInfo.processInfo.processIdentifier {
+                return false
+            }
+            return isTextInputElement(element)
+        }
         guard let app = NSWorkspace.shared.frontmostApplication else { return false }
         if app.processIdentifier == ProcessInfo.processInfo.processIdentifier {
             return false

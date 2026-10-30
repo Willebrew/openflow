@@ -358,18 +358,27 @@ final class DictationCoordinator: ObservableObject {
         let currentSettings = settings
         let contextInput = ContextCaptureInput(settings: currentSettings)
         Task.detached(priority: .userInitiated) { [weak self] in
+            // The frontmost app is not always the real keyboard target:
+            // Notification Center owns banner inline replies while never
+            // becoming frontmost, so resolve the system focused element first.
+            let resolvedTarget = FocusedTargetResolver.resolve(frontmostApp: frontmostApp)
+            let snapshotApp = resolvedTarget.isNonActivatingPanel
+                ? (resolvedTarget.runningApplication ?? frontmostApp)
+                : frontmostApp
             let contextSnapshot = contextService.captureSnapshot(input: contextInput,
-                                                                 activeApplication: frontmostApp,
+                                                                 activeApplication: snapshotApp,
                                                                  searchDescendants: false)
             await MainActor.run {
                 guard let self, self.session?.id == sessionID else { return }
-                self.log("context route: app=\(contextSnapshot.context.activeAppName), category=\(contextSnapshot.context.category.rawValue), canInsert=\(contextSnapshot.canInsertText), fieldBefore=\(contextSnapshot.context.textBefore?.count ?? 0), fieldAfter=\(contextSnapshot.context.textAfter?.count ?? 0))")
+                let panelNote = resolvedTarget.isNonActivatingPanel ? ", nonActivatingPanel=true" : ""
+                self.log("context route: app=\(contextSnapshot.context.activeAppName), category=\(contextSnapshot.context.category.rawValue), canInsert=\(contextSnapshot.canInsertText), fieldBefore=\(contextSnapshot.context.textBefore?.count ?? 0), fieldAfter=\(contextSnapshot.context.textAfter?.count ?? 0)\(panelNote))")
                 self.session?.context = contextSnapshot.context
-                self.session?.focusedElement = contextSnapshot.element
+                self.session?.focusedElement = resolvedTarget.focusedElement ?? contextSnapshot.element
                 self.session?.focusedWindow = contextSnapshot.focusedWindow
                 self.session?.targetProcessIdentifier = contextSnapshot.processIdentifier
                 self.session?.targetCanInsertText = contextSnapshot.canInsertText
                 self.session?.selectedRange = contextSnapshot.selectedRange
+                self.session?.targetIsNonActivatingPanel = resolvedTarget.isNonActivatingPanel
                 self.session?.metrics.activeApp = contextSnapshot.context.activeAppName
                 self.session?.metrics.category = contextSnapshot.context.category
                 self.session?.metrics.contextAvailable = true
@@ -770,10 +779,18 @@ final class DictationCoordinator: ObservableObject {
         let insertionStarted = Date()
         let contextInput = ContextCaptureInput(settings: settings)
         let contextService = context
+        // A non-activating panel target is never frontmost, so a frontmost-app
+        // snapshot would always misreport a focus race here; read the panel's
+        // own app instead.
+        let insertionSnapshotApp = activeSession.targetIsNonActivatingPanel
+            ? activeSession.targetProcessIdentifier.flatMap { NSRunningApplication(processIdentifier: $0) }
+            : nil
         let insertionSnapshot = await Task.detached(priority: .userInitiated) {
-            contextService.captureSnapshot(input: contextInput)
+            contextService.captureSnapshot(input: contextInput,
+                                           activeApplication: insertionSnapshotApp)
         }.value
-        if let originalPID = activeSession.targetProcessIdentifier,
+        if !activeSession.targetIsNonActivatingPanel,
+           let originalPID = activeSession.targetProcessIdentifier,
            insertionSnapshot.processIdentifier != originalPID {
             let raceDescription = "started pid \(originalPID), current pid \(insertionSnapshot.processIdentifier.map(String.init) ?? "none")"
             activeSession.metrics.focusRaceDetected = true

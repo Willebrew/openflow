@@ -21,6 +21,7 @@ enum InsertionMethod: String, Codable {
     case nativeKeyEvents
     case unicodeKeyEvents
     case systemEvents
+    case pasteboardPaste
     case none
 }
 
@@ -90,6 +91,10 @@ struct DictationSession {
     var targetProcessIdentifier: pid_t?
     var targetCanInsertText: Bool = false
     var selectedRange: CFRange?
+    /// True when the dictation target is a non-activating panel (e.g. a
+    /// Notification Center inline reply). Such targets must never be
+    /// activated and never receive an automatic Return.
+    var targetIsNonActivatingPanel: Bool = false
 }
 
 struct TranscriptionResult: Codable {
