@@ -29,6 +29,7 @@ REQUIRE_MANUAL_INSERTION_REGRESSION=1 scripts/check-local-release-gate.sh
 | Ghostty CLI | Native key events, Unicode events | Unverified |
 | Terminal/iTerm | Native key events, Unicode events | Unverified |
 | Messages | Unicode events, AX if available | Verified when readable |
+| Notification Center banner reply (Messages/Slack/Reminders/FaceTime inline reply) | Focused AX selected text, then unicode events, then pasteboard swap; never activates the panel owner | Unverified |
 | Mail | AX focused/descendant | Verified when readable |
 | Notes / TextEdit | Focused AX | Verified. The dictated text appears once. |
 | Electron host (Electron Framework.framework, for example Grok Bot) | Native key events, Unicode events | One insert. The captured accessibility value is not read back. |
@@ -43,6 +44,27 @@ unverified or unreadable result does not start another strategy, because the tex
 already be in the live field. `scripts/check-ax-insertion-policy.swift` and
 `scripts/check-ax-insertion-safety.mjs` pin these rules.
 
+Banner inline replies are owned by Notification Center, which is never
+frontmost, so frontmost-app targeting both captures the wrong context and --
+worse -- `activate()`ing the previous app at insert time drops key focus and
+dismisses the reply panel. `FocusedTargetResolver` + `FocusedTargetPolicy`
+read the system-wide focused element at hotkey time: a focused element owned
+by a non-frontmost process marks the session as a non-activating-panel target
+(Notification Center bundle ids classify as `.messages`; any other
+non-frontmost owner only retargets when the element is editable). Context is
+captured against the panel owner and the insert-time focus-race check is
+skipped, since a panel is never frontmost. `TextInsertionService` then takes
+a dedicated route entered before `restoreTargetApplication`: no `activate()`,
+no `AXFrontmost`, no chrome clicks, no not-frontmost bail. Insert order is
+AX `kAXSelectedTextAttribute` on the focused element, then unicode CGEvents
+to the HID tap, then a pasteboard swap with restore. Keyboard fallbacks run
+only while the panel still holds system focus, and automatic Return is always
+suppressed for panel targets -- a sent reply is irreversible. The dictation
+pill itself is a `NonActivatingPanel` (`canBecomeKey`/`canBecomeMain` false)
+so it cannot steal the reply's focus. `scripts/check-focused-target-policy.swift`
+pins the decision logic (macOS-only) and `scripts/check-notification-reply-insertion.mjs`
+the no-activation rules; both run in `scripts/ci-linux.sh`.
+
 Failure criteria:
 
 - History shows transcription success but insertion failure with no method.
@@ -50,6 +72,8 @@ Failure criteria:
 - Pill shows success after `succeeded == false`.
 - Clipboard contents change during insertion.
 - The second try works but first try fails without a focus-race diagnostic.
+- A banner reply panel closes or loses focus during capture or insertion
+  (an activation regression -- the panel route must never activate any app).
 - Arc, Chrome, Safari, or another browser freezes, beachballs, or becomes unresponsive during context capture or insertion. Browser insertion must not crawl the Accessibility tree; it should use typed-event strategies, then fail visibly.
 
 For each failed target, open Settings -> Diagnostics -> Insertion reports and attach the newest JSON file. Reports must include `targetApp`, `targetBundleID`, `method`, `attemptCount`, `verified`, and `failureReason`, and must not include transcript text or audio bytes.

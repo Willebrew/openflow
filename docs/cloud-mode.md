@@ -115,6 +115,8 @@ The production site URL is configured in `UserSettings`. Routes include:
 - `GET /openflow/entitlement`
 - `POST /openflow/audio-upload-url`
 - `POST /openflow/transcribe`
+- `POST /openflow/transcribe-fast` (direct audio upload)
+- `POST /openflow/warm` (fire-and-forget connection/auth warm-up)
 - `POST /openflow/cleanup`
 - `POST /openflow/generate-style` (Pro only on the server-key path)
 - `POST /openflow/billing/checkout`
@@ -125,6 +127,28 @@ The production site URL is configured in `UserSettings`. Routes include:
 `POST /openflow/generate-style` is Pro-only on the server-key path. Free
 accounts write a style themselves. A stored BYO Groq key generates on the Mac
 for any plan and does not call this route.
+
+## Upload timing
+
+- Every cloud call (warm, transcribe, tickets) shares one ephemeral
+  `URLSession` (`httpMaximumConnectionsPerHost = 2`,
+  `waitsForConnectivity = false`) so the connection a warm ping opens is reused
+  by the upload that follows.
+- On hotkey press `TranscriptionService.warmUp` fires `POST /openflow/warm`,
+  throttled to one call per 60 seconds by `CloudWarmUpGate`, to prime server
+  auth and the TLS/HTTP2 connection. It is fire-and-forget: every failure is
+  ignored, and a 404 just means the backend predates the route. It only runs
+  when `OpenFlowProviderRouting` resolves to cloud transcription -- a stored
+  BYO Groq key skips it entirely.
+- Clips up to 8 MB (`directUploadLimit`) upload directly to
+  `POST /openflow/transcribe-fast`. The request timeout scales with audio:
+  `min(30, 4 + 0.25 * audioSeconds)`. A timeout or a 5xx gets exactly one
+  immediate retry -- the expected failure mode is a cold backend, not
+  congestion. 401/4xx responses and non-timeout transport errors are never
+  retried.
+- Only oversized clips take the ticket/storage path, and only they get the
+  missing-route fallback to Convex storage. Direct-size clips surface the
+  real error instead of paying a second upload round trip.
 
 ## Server-Provided URL Trust
 
