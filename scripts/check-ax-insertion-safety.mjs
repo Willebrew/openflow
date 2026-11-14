@@ -81,4 +81,13 @@ assert(
 assert(!insertion.includes("logInsertion(text"), "insertion diagnostics can log dictated text");
 assert(!captured.includes("case .unverified:\n                    break"), "unverified captured writes still fall through to a second insert");
 
+const candidatesStart = insertion.indexOf("private func insertionCandidates");
+const candidatesEnd = insertion.indexOf("private func editableDescendants", candidatesStart);
+assert(candidatesStart !== -1 && candidatesEnd !== -1, "could not locate insertionCandidates");
+const candidates = insertion.slice(candidatesStart, candidatesEnd);
+assert(
+  candidates.includes("!isFocusedElement(element)"),
+  "descendant scan outside the focused element can write into unfocused toolbar or sidebar fields"
+);
+
 console.log("ax insertion safety checks passed");

@@ -678,10 +678,15 @@ final class TextInsertionService {
 
         var candidates: [AXUIElement] = []
         var seen = Set<AXUIElementID>()
-        for root in roots {
+        for (index, root) in roots.enumerated() {
+            // Outside the focused element's own subtree, only a field that holds focus is
+            // the user's target; anything else is a toolbar or sidebar control (TextEdit's
+            // font size box, a search field) that would swallow the dictation.
+            let requiresFocus = focused == nil || index > 0
             for element in editableDescendants(from: root) {
                 let id = AXUIElementID(element)
                 guard !seen.contains(id) else { continue }
+                if requiresFocus, !isFocusedElement(element) { continue }
                 seen.insert(id)
                 candidates.append(element)
                 if candidates.count >= 12 { return candidates }
@@ -733,6 +738,14 @@ final class TextInsertionService {
             "AXComboBox",
             "AXSearchField"
         ].contains(roleString)
+    }
+
+    private func isFocusedElement(_ element: AXUIElement) -> Bool {
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXFocusedAttribute as CFString, &value) == .success else {
+            return false
+        }
+        return value as? Bool == true
     }
 
     private func editableAttribute(in element: AXUIElement) -> Bool? {
