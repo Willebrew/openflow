@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 
 final class TextInsertionService {
     private struct CursorTextContext {
@@ -50,7 +51,10 @@ final class TextInsertionService {
             try? await Task.sleep(nanoseconds: 90_000_000)
             focused = focusedElement()
         }
-        let prepared = typedEventTarget ? text.trimmingCharacters(in: .newlines) : spacingAdjusted(text, focused: focused)
+        // A terminal's AX value is the whole scrollback, so the shell prompt would read as
+        // mid-sentence context and lowercase the first word of every dictated prompt.
+        let usesCursorContext = !typedEventTarget && category != .terminal
+        let prepared = usesCursorContext ? spacingAdjusted(text, focused: focused) : text.trimmingCharacters(in: .newlines)
         let emptyPrepared = prepared.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if emptyPrepared, !pressEnter {
             return .failed(reason: "Final text was empty after spacing adjustment.",
@@ -373,7 +377,8 @@ final class TextInsertionService {
         releaseShortcutModifiers()
         let browserTarget = isBrowserApp()
         let electronTarget = isElectronApp(processIdentifier: targetProcessIdentifier)
-        let prepared = (browserTarget || electronTarget) ? text.trimmingCharacters(in: .newlines) : spacingAdjusted(text, focused: element)
+        let usesCursorContext = !(browserTarget || electronTarget) && category != .terminal
+        let prepared = usesCursorContext ? spacingAdjusted(text, focused: element) : text.trimmingCharacters(in: .newlines)
         if prepared.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             guard pressEnter else {
                 return .failed(reason: "Final text was empty after spacing adjustment.",
@@ -1316,16 +1321,8 @@ final class TextInsertionService {
         let source = CGEventSource(stateID: .combinedSessionState)
         let chunks = text.chunkedForKeyboardInsertion(maxScalars: text.contains("\n") ? 300 : 700)
         for chunk in chunks {
-            for scalar in chunk.unicodeScalars {
-                var value = UniChar(scalar.value)
-                guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                      let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
-                    return false
-                }
-                down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
-                up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
-                down.post(tap: .cghidEventTap)
-                up.post(tap: .cghidEventTap)
+            for payload in KeyboardEventText.unicodePayloads(for: chunk) {
+                guard postUnicodeKeyEvent(payload, source: source) else { return false }
             }
             if chunks.count > 1 {
                 try? await Task.sleep(nanoseconds: 45_000_000)
@@ -1334,30 +1331,40 @@ final class TextInsertionService {
         return true
     }
 
+    private func postUnicodeKeyEvent(_ units: [UniChar], source: CGEventSource?) -> Bool {
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+            return false
+        }
+        var payload = units
+        down.keyboardSetUnicodeString(stringLength: payload.count, unicodeString: &payload)
+        up.keyboardSetUnicodeString(stringLength: payload.count, unicodeString: &payload)
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        return true
+    }
+
     private func typeTextAsNativeKeyEvents(_ text: String) async -> NativeKeyEventResult {
         guard AXIsProcessTrusted(), !text.isEmpty else { return .failedBeforePosting }
         let source = CGEventSource(stateID: .combinedSessionState)
+        let layout = KeyboardLayoutTranslator()
         var usedFallback = false
         var postedAny = false
 
-        for scalar in text.unicodeScalars {
-            if scalar == "\n" {
+        for character in text {
+            if KeyboardEventText.isLineBreak(character) {
                 postedAny = true
                 sendKey(.init(keyCode: 36, flags: []))
                 continue
             }
-            guard let key = nativeKeyPress(for: scalar) else {
+            guard let key = nativeKeyPress(for: character, layout: layout) else {
                 usedFallback = true
-                var value = UniChar(scalar.value)
-                guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                      let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
-                    return postedAny ? .failedAfterPosting : .failedBeforePosting
+                for payload in KeyboardEventText.payloads(for: character) {
+                    guard postUnicodeKeyEvent(payload, source: source) else {
+                        return postedAny ? .failedAfterPosting : .failedBeforePosting
+                    }
+                    postedAny = true
                 }
-                down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
-                up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
-                down.post(tap: .cghidEventTap)
-                up.post(tap: .cghidEventTap)
-                postedAny = true
                 continue
             }
 
@@ -1376,6 +1383,21 @@ final class TextInsertionService {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         return .posted
+    }
+
+    /// Returns a physical key only when the active layout types exactly this
+    /// character with it. The key codes below are US ANSI positions; on other
+    /// layouts (AZERTY, QWERTZ, Dvorak), dead keys, or input methods they type
+    /// something else, so those characters go through a Unicode event instead.
+    private func nativeKeyPress(for character: Character, layout: KeyboardLayoutTranslator?) -> KeyPress? {
+        guard let scalar = character.unicodeScalars.first,
+              character.unicodeScalars.count == 1,
+              let key = nativeKeyPress(for: scalar),
+              let layout,
+              layout.character(for: key) == String(character) else {
+            return nil
+        }
+        return key
     }
 
     private func sendKey(_ key: KeyPress) {
@@ -1506,6 +1528,51 @@ final class TextInsertionService {
 private struct KeyPress {
     var keyCode: CGKeyCode
     var flags: CGEventFlags
+}
+
+/// Reads what a key types on the user's current keyboard layout.
+private struct KeyboardLayoutTranslator {
+    private let layoutData: Data
+
+    init?() {
+        guard let inputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              Self.stringProperty(inputSource, kTISPropertyInputSourceType) == (kTISTypeKeyboardLayout as String),
+              let layoutSource = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let raw = TISGetInputSourceProperty(layoutSource, kTISPropertyUnicodeKeyLayoutData) else {
+            return nil
+        }
+        layoutData = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue() as Data
+    }
+
+    /// The text the key produces, or nil when it is a dead key or untranslatable.
+    func character(for key: KeyPress) -> String? {
+        layoutData.withUnsafeBytes { buffer -> String? in
+            guard let layout = buffer.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else {
+                return nil
+            }
+            let modifiers: UInt32 = key.flags.contains(.maskShift) ? UInt32(shiftKey >> 8) & 0xFF : 0
+            var deadKeyState: UInt32 = 0
+            var length = 0
+            var characters = [UniChar](repeating: 0, count: 4)
+            let status = UCKeyTranslate(layout,
+                                        UInt16(key.keyCode),
+                                        UInt16(kUCKeyActionDown),
+                                        modifiers,
+                                        UInt32(LMGetKbdType()),
+                                        0,
+                                        &deadKeyState,
+                                        characters.count,
+                                        &length,
+                                        &characters)
+            guard status == noErr, deadKeyState == 0, length > 0 else { return nil }
+            return String(utf16CodeUnits: characters, count: length)
+        }
+    }
+
+    private static func stringProperty(_ source: TISInputSource, _ key: CFString) -> String? {
+        guard let raw = TISGetInputSourceProperty(source, key) else { return nil }
+        return Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue() as String
+    }
 }
 
 private struct AXUIElementID: Hashable {

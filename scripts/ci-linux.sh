@@ -54,6 +54,13 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v swift >/dev/null 2>&1; then
   "$HOME_ACTIVITY_BIN"
   rm -f "$HOME_ACTIVITY_BIN"
   swift "$ROOT/scripts/check-insertion-text-preparation.swift"
+  KEYBOARD_TEXT_BIN="$(mktemp /tmp/openflow-keyboard-text-check.XXXXXX)"
+  swiftc \
+    "$ROOT/openflow/Services/KeyboardEventText.swift" \
+    "$ROOT/scripts/check-keyboard-event-text.swift" \
+    -o "$KEYBOARD_TEXT_BIN"
+  "$KEYBOARD_TEXT_BIN"
+  rm -f "$KEYBOARD_TEXT_BIN"
   AX_INSERTION_BIN="$(mktemp /tmp/openflow-ax-insertion-check.XXXXXX)"
   swiftc \
     "$ROOT/openflow/Services/AXInsertionPolicy.swift" \

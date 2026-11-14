@@ -226,6 +226,15 @@ xcrun --sdk macosx swiftc -sdk "$SDK" \
 "$INSERTION_PREP_CHECK"
 rm -f "$INSERTION_PREP_CHECK"
 
+KEYBOARD_TEXT_CHECK="$(mktemp /tmp/openflow-keyboard-text-check.XXXXXX)"
+xcrun --sdk macosx swiftc -sdk "$SDK" \
+  -target arm64-apple-macos14.0 \
+  openflow/Services/KeyboardEventText.swift \
+  scripts/check-keyboard-event-text.swift \
+  -o "$KEYBOARD_TEXT_CHECK"
+"$KEYBOARD_TEXT_CHECK"
+rm -f "$KEYBOARD_TEXT_CHECK"
+
 AX_INSERTION_CHECK="$(mktemp /tmp/openflow-ax-insertion-check.XXXXXX)"
 xcrun --sdk macosx swiftc -sdk "$SDK" \
   -target arm64-apple-macos14.0 \
