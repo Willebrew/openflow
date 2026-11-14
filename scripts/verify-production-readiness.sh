@@ -235,6 +235,15 @@ xcrun --sdk macosx swiftc -sdk "$SDK" \
 "$KEYBOARD_TEXT_CHECK"
 rm -f "$KEYBOARD_TEXT_CHECK"
 
+KEYBOARD_LAYOUT_CHECK="$(mktemp /tmp/openflow-keyboard-layout-check.XXXXXX)"
+xcrun --sdk macosx swiftc -sdk "$SDK" \
+  -target arm64-apple-macos14.0 \
+  openflow/Services/KeyboardLayoutTranslator.swift \
+  scripts/check-keyboard-layout-translator.swift \
+  -o "$KEYBOARD_LAYOUT_CHECK"
+"$KEYBOARD_LAYOUT_CHECK"
+rm -f "$KEYBOARD_LAYOUT_CHECK"
+
 AX_INSERTION_CHECK="$(mktemp /tmp/openflow-ax-insertion-check.XXXXXX)"
 xcrun --sdk macosx swiftc -sdk "$SDK" \
   -target arm64-apple-macos14.0 \

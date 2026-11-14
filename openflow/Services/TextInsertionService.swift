@@ -1,5 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
 
 final class TextInsertionService {
     private struct CursorTextContext {
@@ -1394,7 +1393,7 @@ final class TextInsertionService {
               character.unicodeScalars.count == 1,
               let key = nativeKeyPress(for: scalar),
               let layout,
-              layout.character(for: key) == String(character) else {
+              layout.character(forKeyCode: key.keyCode, shift: key.flags.contains(.maskShift)) == String(character) else {
             return nil
         }
         return key
@@ -1528,51 +1527,6 @@ final class TextInsertionService {
 private struct KeyPress {
     var keyCode: CGKeyCode
     var flags: CGEventFlags
-}
-
-/// Reads what a key types on the user's current keyboard layout.
-private struct KeyboardLayoutTranslator {
-    private let layoutData: Data
-
-    init?() {
-        guard let inputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
-              Self.stringProperty(inputSource, kTISPropertyInputSourceType) == (kTISTypeKeyboardLayout as String),
-              let layoutSource = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
-              let raw = TISGetInputSourceProperty(layoutSource, kTISPropertyUnicodeKeyLayoutData) else {
-            return nil
-        }
-        layoutData = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue() as Data
-    }
-
-    /// The text the key produces, or nil when it is a dead key or untranslatable.
-    func character(for key: KeyPress) -> String? {
-        layoutData.withUnsafeBytes { buffer -> String? in
-            guard let layout = buffer.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else {
-                return nil
-            }
-            let modifiers: UInt32 = key.flags.contains(.maskShift) ? UInt32(shiftKey >> 8) & 0xFF : 0
-            var deadKeyState: UInt32 = 0
-            var length = 0
-            var characters = [UniChar](repeating: 0, count: 4)
-            let status = UCKeyTranslate(layout,
-                                        UInt16(key.keyCode),
-                                        UInt16(kUCKeyActionDown),
-                                        modifiers,
-                                        UInt32(LMGetKbdType()),
-                                        0,
-                                        &deadKeyState,
-                                        characters.count,
-                                        &length,
-                                        &characters)
-            guard status == noErr, deadKeyState == 0, length > 0 else { return nil }
-            return String(utf16CodeUnits: characters, count: length)
-        }
-    }
-
-    private static func stringProperty(_ source: TISInputSource, _ key: CFString) -> String? {
-        guard let raw = TISGetInputSourceProperty(source, key) else { return nil }
-        return Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue() as String
-    }
 }
 
 private struct AXUIElementID: Hashable {
