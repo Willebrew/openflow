@@ -297,6 +297,9 @@ xcrun --sdk macosx swiftc -sdk "$SDK" \
   openflow/Services/FieldTextWindow.swift \
   openflow/Services/SelfCorrectionFormatter.swift \
   openflow/Services/ListFormatter.swift \
+  openflow/Services/CleanupLengthGuard.swift \
+  openflow/Services/CasualMessagesFormatter.swift \
+  openflow/Services/MidSentenceCasingFormatter.swift \
   openflow/Services/ContextService.swift \
   scripts/check-cleanup-context.swift \
   -o "$CLEANUP_CONTEXT_CHECK"
