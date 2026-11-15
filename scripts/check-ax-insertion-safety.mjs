@@ -90,4 +90,27 @@ assert(
   "descendant scan outside the focused element can write into unfocused toolbar or sidebar fields"
 );
 
+const refocusStart = insertion.indexOf("private func refocusCapturedElement");
+const refocus = insertion.slice(refocusStart, insertion.indexOf("\n    }\n", refocusStart));
+assert(
+  refocus.indexOf("selectedRange(in: element) != nil") !== -1
+    && refocus.indexOf("selectedRange(in: element) != nil") < refocus.indexOf("kAXPressAction"),
+  "captured element refocus can press a non-text control such as a color well"
+);
+
+const contextService = read("openflow/Services/ContextService.swift");
+for (const root of ["window", "axApp"]) {
+  assert(
+    contextService.includes(`descendantSelectionSnapshot(from: ${root}, requireFocus: true)`),
+    `context capture can take an unfocused ${root} control as the dictation target`
+  );
+}
+const focusedStart = contextService.indexOf("private func focusedTextContext");
+const focusedBody = contextService.slice(focusedStart, contextService.indexOf("private func usableFieldSnapshot", focusedStart));
+assert(
+  focusedBody.indexOf("let range = selectedRange(in: element)") !== -1
+    && focusedBody.indexOf("let range = selectedRange(in: element)") < focusedBody.indexOf("descendantSelectionSnapshot(from: window"),
+  "an empty focused text field falls through to a window-wide search"
+);
+
 console.log("ax insertion safety checks passed");

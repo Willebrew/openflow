@@ -182,6 +182,19 @@ final class ContextService {
             if let snapshot = usableFieldSnapshot(snapshot: selectionSnapshot(in: element)) {
                 return fieldRead(from: snapshot, focusedWindow: focusedWindowElement, canInsertText: true)
             }
+            // An empty focused field still has a caret. It is the target; searching the window
+            // instead would hand back whichever toolbar control happens to hold text.
+            if !isBrowser, let range = selectedRange(in: element) {
+                return FieldRead(selectedText: nil,
+                                 nearbyText: nil,
+                                 textBefore: nil,
+                                 textAfter: nil,
+                                 element: element,
+                                 focusedWindow: focusedWindowElement,
+                                 source: nil,
+                                 canInsertText: true,
+                                 selectedRange: range)
+            }
             if searchDescendants,
                !isBrowser,
                let snapshot = usableFieldSnapshot(snapshot: descendantSelectionSnapshot(from: element)) {
@@ -213,7 +226,7 @@ final class ContextService {
                 canInsertText = canInsertText || descendantSupportsTextInsertion(from: window, assumeWebContentCanType: false)
             }
             if searchDescendants,
-               let snapshot = usableFieldSnapshot(snapshot: descendantSelectionSnapshot(from: window)) {
+               let snapshot = usableFieldSnapshot(snapshot: descendantSelectionSnapshot(from: window, requireFocus: true)) {
                 return fieldRead(from: snapshot, focusedWindow: focusedWindowElement, canInsertText: true)
             }
         }
@@ -222,7 +235,7 @@ final class ContextService {
             canInsertText = canInsertText || descendantSupportsTextInsertion(from: axApp, assumeWebContentCanType: false)
         }
         if searchDescendants,
-           let snapshot = usableFieldSnapshot(snapshot: descendantSelectionSnapshot(from: axApp)) {
+           let snapshot = usableFieldSnapshot(snapshot: descendantSelectionSnapshot(from: axApp, requireFocus: true)) {
             return fieldRead(from: snapshot, focusedWindow: focusedWindowElement, canInsertText: true)
         }
 
@@ -325,6 +338,14 @@ final class ContextService {
         return AXUIElementCopyAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, &markerRange) == .success && markerRange != nil
     }
 
+    private func isFocusedElement(_ element: AXUIElement) -> Bool {
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXFocusedAttribute as CFString, &value) == .success else {
+            return false
+        }
+        return value as? Bool == true
+    }
+
     private func selectedRange(in element: AXUIElement) -> CFRange? {
         var selectedRangeValue: AnyObject?
         guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRangeValue) == .success,
@@ -379,7 +400,10 @@ final class ContextService {
                                      selectedRange: range)
     }
 
-    private func descendantSelectionSnapshot(from root: AXUIElement) -> TextSelectionSnapshot? {
+    /// `requireFocus` limits a window- or app-wide search to the field that holds focus, so an
+    /// unfocused control with text (a font size box, a search field) is never taken as the target.
+    private func descendantSelectionSnapshot(from root: AXUIElement,
+                                             requireFocus: Bool = false) -> TextSelectionSnapshot? {
         var queue: [AXUIElement] = [root]
         var visited = 0
 
@@ -387,7 +411,8 @@ final class ContextService {
             let element = queue.removeFirst()
             visited += 1
 
-            if let snapshot = usableFieldSnapshot(snapshot: selectionSnapshot(in: element)) {
+            if !requireFocus || isFocusedElement(element),
+               let snapshot = usableFieldSnapshot(snapshot: selectionSnapshot(in: element)) {
                 return snapshot
             }
 

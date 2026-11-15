@@ -823,7 +823,9 @@ final class TextInsertionService {
     }
 
     private func refocusCapturedElement(_ element: AXUIElement) async {
-        guard AXIsProcessTrusted() else { return }
+        // Only a text field gets focused and pressed again; pressing a captured color well or
+        // button opens it and steals the keystrokes that follow.
+        guard AXIsProcessTrusted(), selectedRange(in: element) != nil else { return }
         _ = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, true as CFTypeRef)
         _ = AXUIElementPerformAction(element, kAXPressAction as CFString)
         try? await Task.sleep(nanoseconds: 70_000_000)
