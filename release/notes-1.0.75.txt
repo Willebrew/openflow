@@ -1,0 +1,5 @@
+openflow 1.0.75
+
+- Keep emoji, non-US keyboard layouts, terminal capitalization and empty text fields intact when dictation is typed in.
+- Insert dictation into Notification Center inline replies.
+- Warm the cloud session before you speak, give long uploads more time, and guard formatting of dictated text.
