@@ -50,7 +50,10 @@ final class TextInsertionService {
             try? await Task.sleep(nanoseconds: 90_000_000)
             focused = focusedElement()
         }
-        let prepared = typedEventTarget ? text.trimmingCharacters(in: .newlines) : spacingAdjusted(text, focused: focused)
+        // A terminal's AX value is the whole scrollback, so the shell prompt would read as
+        // mid-sentence context and lowercase the first word of every dictated prompt.
+        let usesCursorContext = !typedEventTarget && category != .terminal
+        let prepared = usesCursorContext ? spacingAdjusted(text, focused: focused) : text.trimmingCharacters(in: .newlines)
         let emptyPrepared = prepared.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if emptyPrepared, !pressEnter {
             return .failed(reason: "Final text was empty after spacing adjustment.",
@@ -373,7 +376,8 @@ final class TextInsertionService {
         releaseShortcutModifiers()
         let browserTarget = isBrowserApp()
         let electronTarget = isElectronApp(processIdentifier: targetProcessIdentifier)
-        let prepared = (browserTarget || electronTarget) ? text.trimmingCharacters(in: .newlines) : spacingAdjusted(text, focused: element)
+        let usesCursorContext = !(browserTarget || electronTarget) && category != .terminal
+        let prepared = usesCursorContext ? spacingAdjusted(text, focused: element) : text.trimmingCharacters(in: .newlines)
         if prepared.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             guard pressEnter else {
                 return .failed(reason: "Final text was empty after spacing adjustment.",
@@ -674,10 +678,15 @@ final class TextInsertionService {
 
         var candidates: [AXUIElement] = []
         var seen = Set<AXUIElementID>()
-        for root in roots {
+        for (index, root) in roots.enumerated() {
+            // Outside the focused element's own subtree, only a field that holds focus is
+            // the user's target; anything else is a toolbar or sidebar control (TextEdit's
+            // font size box, a search field) that would swallow the dictation.
+            let requiresFocus = focused == nil || index > 0
             for element in editableDescendants(from: root) {
                 let id = AXUIElementID(element)
                 guard !seen.contains(id) else { continue }
+                if requiresFocus, !isFocusedElement(element) { continue }
                 seen.insert(id)
                 candidates.append(element)
                 if candidates.count >= 12 { return candidates }
@@ -729,6 +738,14 @@ final class TextInsertionService {
             "AXComboBox",
             "AXSearchField"
         ].contains(roleString)
+    }
+
+    private func isFocusedElement(_ element: AXUIElement) -> Bool {
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXFocusedAttribute as CFString, &value) == .success else {
+            return false
+        }
+        return value as? Bool == true
     }
 
     private func editableAttribute(in element: AXUIElement) -> Bool? {
@@ -806,7 +823,9 @@ final class TextInsertionService {
     }
 
     private func refocusCapturedElement(_ element: AXUIElement) async {
-        guard AXIsProcessTrusted() else { return }
+        // Only a text field gets focused and pressed again; pressing a captured color well or
+        // button opens it and steals the keystrokes that follow.
+        guard AXIsProcessTrusted(), selectedRange(in: element) != nil else { return }
         _ = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, true as CFTypeRef)
         _ = AXUIElementPerformAction(element, kAXPressAction as CFString)
         try? await Task.sleep(nanoseconds: 70_000_000)
@@ -1316,16 +1335,8 @@ final class TextInsertionService {
         let source = CGEventSource(stateID: .combinedSessionState)
         let chunks = text.chunkedForKeyboardInsertion(maxScalars: text.contains("\n") ? 300 : 700)
         for chunk in chunks {
-            for scalar in chunk.unicodeScalars {
-                var value = UniChar(scalar.value)
-                guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                      let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
-                    return false
-                }
-                down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
-                up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
-                down.post(tap: .cghidEventTap)
-                up.post(tap: .cghidEventTap)
+            for payload in KeyboardEventText.unicodePayloads(for: chunk) {
+                guard postUnicodeKeyEvent(payload, source: source) else { return false }
             }
             if chunks.count > 1 {
                 try? await Task.sleep(nanoseconds: 45_000_000)
@@ -1334,30 +1345,40 @@ final class TextInsertionService {
         return true
     }
 
+    private func postUnicodeKeyEvent(_ units: [UniChar], source: CGEventSource?) -> Bool {
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+            return false
+        }
+        var payload = units
+        down.keyboardSetUnicodeString(stringLength: payload.count, unicodeString: &payload)
+        up.keyboardSetUnicodeString(stringLength: payload.count, unicodeString: &payload)
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        return true
+    }
+
     private func typeTextAsNativeKeyEvents(_ text: String) async -> NativeKeyEventResult {
         guard AXIsProcessTrusted(), !text.isEmpty else { return .failedBeforePosting }
         let source = CGEventSource(stateID: .combinedSessionState)
+        let layout = KeyboardLayoutTranslator()
         var usedFallback = false
         var postedAny = false
 
-        for scalar in text.unicodeScalars {
-            if scalar == "\n" {
+        for character in text {
+            if KeyboardEventText.isLineBreak(character) {
                 postedAny = true
                 sendKey(.init(keyCode: 36, flags: []))
                 continue
             }
-            guard let key = nativeKeyPress(for: scalar) else {
+            guard let key = nativeKeyPress(for: character, layout: layout) else {
                 usedFallback = true
-                var value = UniChar(scalar.value)
-                guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                      let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
-                    return postedAny ? .failedAfterPosting : .failedBeforePosting
+                for payload in KeyboardEventText.payloads(for: character) {
+                    guard postUnicodeKeyEvent(payload, source: source) else {
+                        return postedAny ? .failedAfterPosting : .failedBeforePosting
+                    }
+                    postedAny = true
                 }
-                down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
-                up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
-                down.post(tap: .cghidEventTap)
-                up.post(tap: .cghidEventTap)
-                postedAny = true
                 continue
             }
 
@@ -1376,6 +1397,21 @@ final class TextInsertionService {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         return .posted
+    }
+
+    /// Returns a physical key only when the active layout types exactly this
+    /// character with it. The key codes below are US ANSI positions; on other
+    /// layouts (AZERTY, QWERTZ, Dvorak), dead keys, or input methods they type
+    /// something else, so those characters go through a Unicode event instead.
+    private func nativeKeyPress(for character: Character, layout: KeyboardLayoutTranslator?) -> KeyPress? {
+        guard let scalar = character.unicodeScalars.first,
+              character.unicodeScalars.count == 1,
+              let key = nativeKeyPress(for: scalar),
+              let layout,
+              layout.character(forKeyCode: key.keyCode, shift: key.flags.contains(.maskShift)) == String(character) else {
+            return nil
+        }
+        return key
     }
 
     private func sendKey(_ key: KeyPress) {

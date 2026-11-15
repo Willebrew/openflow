@@ -226,6 +226,24 @@ xcrun --sdk macosx swiftc -sdk "$SDK" \
 "$INSERTION_PREP_CHECK"
 rm -f "$INSERTION_PREP_CHECK"
 
+KEYBOARD_TEXT_CHECK="$(mktemp /tmp/openflow-keyboard-text-check.XXXXXX)"
+xcrun --sdk macosx swiftc -sdk "$SDK" \
+  -target arm64-apple-macos14.0 \
+  openflow/Services/KeyboardEventText.swift \
+  scripts/check-keyboard-event-text.swift \
+  -o "$KEYBOARD_TEXT_CHECK"
+"$KEYBOARD_TEXT_CHECK"
+rm -f "$KEYBOARD_TEXT_CHECK"
+
+KEYBOARD_LAYOUT_CHECK="$(mktemp /tmp/openflow-keyboard-layout-check.XXXXXX)"
+xcrun --sdk macosx swiftc -sdk "$SDK" \
+  -target arm64-apple-macos14.0 \
+  openflow/Services/KeyboardLayoutTranslator.swift \
+  scripts/check-keyboard-layout-translator.swift \
+  -o "$KEYBOARD_LAYOUT_CHECK"
+"$KEYBOARD_LAYOUT_CHECK"
+rm -f "$KEYBOARD_LAYOUT_CHECK"
+
 AX_INSERTION_CHECK="$(mktemp /tmp/openflow-ax-insertion-check.XXXXXX)"
 xcrun --sdk macosx swiftc -sdk "$SDK" \
   -target arm64-apple-macos14.0 \
@@ -279,6 +297,9 @@ xcrun --sdk macosx swiftc -sdk "$SDK" \
   openflow/Services/FieldTextWindow.swift \
   openflow/Services/SelfCorrectionFormatter.swift \
   openflow/Services/ListFormatter.swift \
+  openflow/Services/CleanupLengthGuard.swift \
+  openflow/Services/CasualMessagesFormatter.swift \
+  openflow/Services/MidSentenceCasingFormatter.swift \
   openflow/Services/ContextService.swift \
   scripts/check-cleanup-context.swift \
   -o "$CLEANUP_CONTEXT_CHECK"
