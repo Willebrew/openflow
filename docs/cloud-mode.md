@@ -147,8 +147,18 @@ extending the allowlist, never bypassing the policy;
 
 ## Privacy Defaults
 
-- Local mode sends audio/transcript directly to Groq using the user's key.
+- Cleanup requests, in both modes, include the transcript and the name of the
+  app being dictated into. With Context awareness on, they also include any
+  selected text and the text near the cursor in that field. With Browser
+  detection on (it requires Context awareness), they may also include the
+  address of the page open in a supported browser. Both settings default on and
+  can be turned off in Settings.
+- Local mode sends audio, transcript, and that same cleanup context directly
+  from the Mac to Groq using the user's key. It does not pass through
+  NeuroQuest Labs servers.
+- Local mode with a signed-in session still posts usage metadata (word count,
+  audio length and size, time, target app name) to `POST /openflow/activity`.
+  No audio or transcript text.
 - Cloud mode proxies through NeuroQuest/OpenFlow infrastructure.
-- Cloud mode stores usage/error/latency metadata only.
-- Cloud mode does not retain audio or transcript text unless a future explicit opt-in debug feature is designed.
-- Cloud cleanup requests include the transcript plus any selected text and nearby text as context.
+- Cloud mode stores usage, error, latency, and target app metadata only.
+- Cloud mode does not retain audio, transcript, or cleanup context text unless a future explicit opt-in debug feature is designed.

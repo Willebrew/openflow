@@ -96,9 +96,10 @@ runs of spaces do not inflate the count.
 ## Local-provider activity still reaches the cloud
 
 `DictationCoordinator.syncLocalProviderActivityIfNeeded` posts word and audio
-totals to `POST /openflow/activity` for dictations whose provider is *not*
-`openflow-pro`, then refreshes `/openflow/stats`. Signed-in users therefore get
-consistent Home stats across devices even while using their own Groq key.
+totals, timing, and the target app name to `POST /openflow/activity` for
+dictations whose provider is *not* `openflow-pro`, then refreshes
+`/openflow/stats`. Signed-in users therefore get consistent Home stats across
+devices even while using their own Groq key.
 Transcript text is never part of that payload.
 
 ## Constraints and pitfalls
