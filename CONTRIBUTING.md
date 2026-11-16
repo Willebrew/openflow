@@ -28,6 +28,16 @@ Open the project in Xcode, choose your signing team, and build the `openflow` sc
 - Do not commit secrets, API keys, certificates, or local credentials.
 - Describe what changed and why.
 
+## Checks
+
+- `bash scripts/ci-linux.sh` runs the portable gate: the production-readiness
+  script plus shell/Node contract checks. The Swift contract checks inside it
+  are macOS-only and skip on Linux.
+- Unit tests live in the `openflowTests` target, wired into the shared
+  `openflow` scheme: Product > Test in Xcode, or
+  `xcodebuild -project openflow.xcodeproj -scheme openflow test`.
+- `scripts/check-local-release-gate.sh` is the full macOS release gate.
+
 ## Issues
 
 Search open and closed issues first. If you file a new one, include the macOS version, how you built or installed openflow, and steps to reproduce.
