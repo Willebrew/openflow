@@ -752,9 +752,9 @@ struct SettingsView: View {
             settingsCard("General") {
                 settingsToggleRow("History", "Save final dictations locally.", isOn: $settings.historyEnabled)
                 permissionDivider
-                settingsToggleRow("Context awareness", "Use the focused app for spacing and tone. When off, nearby field text stays on this Mac and is not sent for cleanup.", isOn: $settings.contextAwarenessEnabled)
+                settingsToggleRow("Context awareness", "When on, cleanup also receives any selected text and the text near your cursor to match spacing and tone. When off, that text stays on this Mac. The app name is always sent.", isOn: $settings.contextAwarenessEnabled)
                 permissionDivider
-                settingsToggleRow("Browser detection", "Read supported browser URLs when available.", isOn: $settings.browserURLDetectionEnabled)
+                settingsToggleRow("Browser detection", "When on, cleanup may also receive the address of the page open in a supported browser. Requires Context awareness.", isOn: $settings.browserURLDetectionEnabled)
                 permissionDivider
                 settingsToggleRow("Spoken press enter", "When on, a trailing press enter, hit enter, or press return sends Return and those words are removed. When off, the words stay in the document.", isOn: $settings.pressEnterCommandEnabled)
                 permissionDivider

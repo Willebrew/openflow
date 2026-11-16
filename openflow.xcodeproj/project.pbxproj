@@ -320,7 +320,7 @@
 				CODE_SIGN_ENTITLEMENTS = openflow/openflow.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 74;
+				CURRENT_PROJECT_VERSION = 79;
 				DEVELOPMENT_TEAM = PXAS7J4XKW;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -338,7 +338,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.71;
+				MARKETING_VERSION = 1.0.75;
 				PRODUCT_BUNDLE_IDENTIFIER = com.neuroquestlabs.openflow;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -359,7 +359,7 @@
 				CODE_SIGN_ENTITLEMENTS = openflow/openflow.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 74;
+				CURRENT_PROJECT_VERSION = 79;
 				DEVELOPMENT_TEAM = PXAS7J4XKW;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -377,7 +377,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.71;
+				MARKETING_VERSION = 1.0.75;
 				PRODUCT_BUNDLE_IDENTIFIER = com.neuroquestlabs.openflow;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
