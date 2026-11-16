@@ -1329,7 +1329,7 @@ final class TextInsertionService {
 
     private func withKeyboardInputSource<Result>(failure: Result,
                                                  operation: () async -> Result) async -> Result {
-        guard let inputSource = KeyboardInputSourceOverride() else { return failure }
+        guard let inputSource = KeyboardInputSourceOverride() else { return await operation() }
         defer {
             if inputSource.restore() != 0 {
                 DiagnosticsLog.shared.write("insertion: could not restore keyboard input source")

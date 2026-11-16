@@ -14,14 +14,15 @@ assert(layout.includes("kTISCategoryKeyboardInputSource"));
 assert(layout.includes("TISCopyCurrentASCIICapableKeyboardLayoutInputSource"), "preserve the user's ASCII layout, not a hardcoded US layout");
 assert(layout.includes("TISSelectInputSource(original)"), "restore the retained original source");
 const scope = section("private func withKeyboardInputSource", "private func typeTextWithKeyboardEvents");
+assert.match(scope, /KeyboardInputSourceOverride\(\) else \{ return await operation\(\) \}/, "an unreadable input source must not block insertion");
 assert.match(scope, /defer\s*\{[\s\S]*inputSource\.restore\(\)/, "restore on all operation exits");
-assert(scope.indexOf("settle") < scope.indexOf("await operation()"), "settle before posting");
-assert(scope.indexOf("await operation()") < scope.lastIndexOf("settle"), "drain before deferred restore");
+assert(scope.indexOf("settle") < scope.indexOf("let result = await operation()"), "settle before posting");
+assert(scope.indexOf("let result = await operation()") < scope.lastIndexOf("settle"), "drain before deferred restore");
 assert(scope.includes("Task.detached"), "cancellation must not skip settling/draining");
 assert(!scope.includes("sendEnter") && !scope.includes("keyCode: 36") && !scope.includes("keyCode: 53"), "never use Return or Escape to commit composition");
 assert.match(scope, /if inputSource\.commitsWithEisu\s*\{\s*sendKey\(\.init\(keyCode: 0x66, flags: \[\]\)\)/, "Eisu must be gated to measured input methods");
 assert(scope.indexOf("keyCode: 0x66") < scope.indexOf("inputSource.select()"), "commit before switching sources");
-assert(scope.indexOf("inputSource.select()") < scope.indexOf("await operation()"));
+assert(scope.indexOf("inputSource.select()") < scope.indexOf("let result = await operation()"));
 for (const [name, end] of [["typeTextWithKeyboardEvents", "postTextWithKeyboardEvents"], ["typeTextAsNativeKeyEvents", "postTextAsNativeKeyEvents"]]) {
   const body = section(`private func ${name}`, `private func ${end}`);
   assert(body.includes("withKeyboardInputSource"), `${name} must guard its entire posting operation`);
