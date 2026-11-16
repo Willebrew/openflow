@@ -22,6 +22,14 @@ fi
 
 node "$ROOT/scripts/check-audio-capture-safety.mjs"
 node "$ROOT/scripts/check-browser-insertion-safety.mjs"
+node "$ROOT/scripts/check-ime-terminal-insertion-safety.mjs"
+if command -v swiftc >/dev/null 2>&1; then
+  INPUT_SOURCE_BIN="$(mktemp /tmp/openflow-input-source-check.XXXXXX)"
+  swiftc "$ROOT/openflow/Services/KeyboardLayoutTranslator.swift" \
+    "$ROOT/scripts/check-keyboard-input-source.swift" -o "$INPUT_SOURCE_BIN"
+  "$INPUT_SOURCE_BIN"
+  rm -f "$INPUT_SOURCE_BIN"
+fi
 node "$ROOT/scripts/check-ax-insertion-safety.mjs"
 node "$ROOT/scripts/check-notification-reply-insertion.mjs"
 node "$ROOT/scripts/check-hotkey-text-input-safety.mjs"

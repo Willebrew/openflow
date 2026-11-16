@@ -98,7 +98,7 @@ const partialPostCaseCount =
   insertion.match(/case \.failedAfterPosting:/g)?.length ?? 0;
 assert(partialPostCaseCount === 5, "partial native posts are not fail-closed at every call site");
 assert(insertion.includes("partially posted; not retyping"), "partial native posts do not fail closed");
-assert(insertion.includes("case .unreadable, .changedButUnverified:"), "lenient terminal verification cases were not preserved");
+assert(insertion.includes("case .unchanged, .unreadable, .changedButUnverified:"), "unchanged readback must share unverified terminal success handling");
 assert(cloud.includes("fileExists(atPath: audioURL.path)"), "missing audio files can mint upload reservations");
 assert(cloud.includes("pressEnterVoiceCommandEnabled: settings.pressEnterCommandEnabled"), "cloud cleanup does not send the local pressEnter preference");
 assert(cloud.includes("pressEnter: settings.pressEnterCommandEnabled && response.pressEnter"), "cloud cleanup response is not gated by the local pressEnter preference");

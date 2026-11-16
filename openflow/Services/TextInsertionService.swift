@@ -109,8 +109,7 @@ final class TextInsertionService {
             attempts += 1
             switch await typeTextAsNativeKeyEvents(prepared) {
             case .posted:
-                try? await Task.sleep(nanoseconds: 90_000_000)
-                switch terminalTypingVerification(prepared,
+                switch await terminalTypingVerification(prepared,
                                                   previousText: readableBefore,
                                                   processIdentifier: targetProcessIdentifier,
                                                   focused: focused) {
@@ -124,14 +123,7 @@ final class TextInsertionService {
                         )
                     }
                     return result(method: .nativeKeyEvents, verified: true, attempts: attempts, target: target)
-                case .unchanged:
-                    return .failed(
-                        reason: "native key events posted but terminal text was unchanged; not retyping to avoid duplicate entry",
-                        attemptCount: attempts,
-                        targetApp: target.name,
-                        targetBundleID: target.bundleID
-                    )
-                case .unreadable, .changedButUnverified:
+                case .unchanged, .unreadable, .changedButUnverified:
                     if targetIsFrontmost(targetProcessIdentifier) {
                         if mayPressEnter {
                             await submitTerminalEnterIfConfirmed(
@@ -1129,17 +1121,22 @@ final class TextInsertionService {
     private func terminalTypingVerification(_ insertedText: String,
                                             previousText: String?,
                                             processIdentifier: pid_t?,
-                                            focused: AXUIElement?) -> TerminalTypingVerification {
+                                            focused: AXUIElement?) async -> TerminalTypingVerification {
         guard let previousText else { return .unreadable }
-        guard let after = terminalTextSnapshot(processIdentifier: processIdentifier, focused: focused) else { return .unreadable }
         let needle = insertedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !needle.isEmpty, after.contains(needle) {
-            return .verified
-        }
-        if after == previousText {
-            return .unchanged
-        }
-        return .changedButUnverified
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.5
+        var verification = TerminalTypingVerification.unreadable
+        repeat {
+            if let after = terminalTextSnapshot(processIdentifier: processIdentifier, focused: focused) {
+                if after != previousText, !needle.isEmpty, after.contains(needle) {
+                    return .verified
+                }
+                verification = after == previousText ? .unchanged : .changedButUnverified
+            }
+            guard !Task.isCancelled, ProcessInfo.processInfo.systemUptime < deadline else { break }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return verification
     }
 
     private func terminalTextSnapshot(processIdentifier: pid_t?, focused: AXUIElement?) -> String? {
@@ -1330,7 +1327,39 @@ final class TextInsertionService {
         }
     }
 
+    private func withKeyboardInputSource<Result>(failure: Result,
+                                                 operation: () async -> Result) async -> Result {
+        guard let inputSource = KeyboardInputSourceOverride() else { return failure }
+        defer {
+            if inputSource.restore() != 0 {
+                DiagnosticsLog.shared.write("insertion: could not restore keyboard input source")
+            }
+        }
+        // Source changes and event delivery are asynchronous, including on partial posting failures.
+        let settle: UInt64 = 150_000_000
+        if inputSource.changed {
+            if inputSource.commitsWithEisu {
+                sendKey(.init(keyCode: 0x66, flags: []))
+                await Task.detached { try? await Task.sleep(nanoseconds: settle) }.value
+            }
+            guard inputSource.select() == 0 else { return failure }
+            await Task.detached { try? await Task.sleep(nanoseconds: settle) }.value
+        }
+        let result = await operation()
+        if inputSource.changed {
+            await Task.detached { try? await Task.sleep(nanoseconds: settle) }.value
+        }
+        return result
+    }
+
     private func typeTextWithKeyboardEvents(_ text: String) async -> Bool {
+        guard AXIsProcessTrusted(), !text.isEmpty else { return false }
+        return await withKeyboardInputSource(failure: false) {
+            await self.postTextWithKeyboardEvents(text)
+        }
+    }
+
+    private func postTextWithKeyboardEvents(_ text: String) async -> Bool {
         guard AXIsProcessTrusted(), !text.isEmpty else { return false }
         let source = CGEventSource(stateID: .combinedSessionState)
         let chunks = text.chunkedForKeyboardInsertion(maxScalars: text.contains("\n") ? 300 : 700)
@@ -1359,6 +1388,13 @@ final class TextInsertionService {
     }
 
     private func typeTextAsNativeKeyEvents(_ text: String) async -> NativeKeyEventResult {
+        guard AXIsProcessTrusted(), !text.isEmpty else { return .failedBeforePosting }
+        return await withKeyboardInputSource(failure: .failedBeforePosting) {
+            await self.postTextAsNativeKeyEvents(text)
+        }
+    }
+
+    private func postTextAsNativeKeyEvents(_ text: String) async -> NativeKeyEventResult {
         guard AXIsProcessTrusted(), !text.isEmpty else { return .failedBeforePosting }
         let source = CGEventSource(stateID: .combinedSessionState)
         let layout = KeyboardLayoutTranslator()

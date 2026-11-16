@@ -1,4 +1,68 @@
+#if canImport(Carbon.HIToolbox)
 import Carbon.HIToolbox
+#endif
+
+enum KeyboardInputSourcePolicy {
+    static func requiresOverride(isKeyboard: Bool, isLayout: Bool, isASCII: Bool) -> Bool {
+        !(isKeyboard && isLayout && isASCII)
+    }
+
+    static func commitsWithEisu(sourceID: String) -> Bool {
+        sourceID.hasPrefix("com.apple.inputmethod.Kotoeri.") ||
+            sourceID == "com.apple.inputmethod.SCIM.ITABC"
+    }
+}
+
+#if canImport(Carbon.HIToolbox)
+
+struct KeyboardInputSourceOverride {
+    private let original: TISInputSource?
+    private let layout: TISInputSource?
+    let commitsWithEisu: Bool
+
+    var changed: Bool { original != nil }
+
+    init?() {
+        guard let current = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return nil }
+        if Self.isASCIIKeyboardLayout(current) {
+            original = nil
+            layout = nil
+            commitsWithEisu = false
+            return
+        }
+        guard let layout = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
+              Self.isASCIIKeyboardLayout(layout) else { return nil }
+        original = current
+        self.layout = layout
+        if let rawID = TISGetInputSourceProperty(current, kTISPropertyInputSourceID) {
+            let sourceID = Unmanaged<CFString>.fromOpaque(rawID).takeUnretainedValue() as String
+            commitsWithEisu = KeyboardInputSourcePolicy.commitsWithEisu(sourceID: sourceID)
+        } else {
+            commitsWithEisu = false
+        }
+    }
+
+    func select() -> OSStatus {
+        guard let layout else { return noErr }
+        return TISSelectInputSource(layout)
+    }
+
+    func restore() -> OSStatus {
+        guard let original else { return noErr }
+        return TISSelectInputSource(original)
+    }
+
+    private static func isASCIIKeyboardLayout(_ source: TISInputSource) -> Bool {
+        guard let category = TISGetInputSourceProperty(source, kTISPropertyInputSourceCategory),
+              let type = TISGetInputSourceProperty(source, kTISPropertyInputSourceType),
+              let ascii = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsASCIICapable) else { return false }
+        return !KeyboardInputSourcePolicy.requiresOverride(
+            isKeyboard: Unmanaged<CFString>.fromOpaque(category).takeUnretainedValue() == kTISCategoryKeyboardInputSource,
+            isLayout: Unmanaged<CFString>.fromOpaque(type).takeUnretainedValue() == kTISTypeKeyboardLayout,
+            isASCII: CFBooleanGetValue(Unmanaged<CFBoolean>.fromOpaque(ascii).takeUnretainedValue())
+        )
+    }
+}
 
 /// Reads what a physical key types on a keyboard layout.
 struct KeyboardLayoutTranslator {
@@ -61,3 +125,4 @@ struct KeyboardLayoutTranslator {
         return Unmanaged<CFString>.fromOpaque(raw).takeUnretainedValue() as String
     }
 }
+#endif
