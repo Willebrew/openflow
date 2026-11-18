@@ -170,6 +170,7 @@ settings_direct_opens="$(
 [[ "${settings_direct_opens:-0}" == "1" ]] ||
   fail "settings may only open the local diagnostics folder directly"
 node scripts/check-browser-insertion-safety.mjs
+node scripts/check-ime-terminal-insertion-safety.mjs
 node scripts/check-ax-insertion-safety.mjs
 node scripts/check-audio-capture-safety.mjs
 node scripts/check-hotkey-text-input-safety.mjs
@@ -243,6 +244,15 @@ xcrun --sdk macosx swiftc -sdk "$SDK" \
   -o "$KEYBOARD_LAYOUT_CHECK"
 "$KEYBOARD_LAYOUT_CHECK"
 rm -f "$KEYBOARD_LAYOUT_CHECK"
+
+INPUT_SOURCE_CHECK="$(mktemp /tmp/openflow-input-source-check.XXXXXX)"
+xcrun --sdk macosx swiftc -sdk "$SDK" \
+  -target arm64-apple-macos14.0 \
+  openflow/Services/KeyboardLayoutTranslator.swift \
+  scripts/check-keyboard-input-source.swift \
+  -o "$INPUT_SOURCE_CHECK"
+"$INPUT_SOURCE_CHECK"
+rm -f "$INPUT_SOURCE_CHECK"
 
 AX_INSERTION_CHECK="$(mktemp /tmp/openflow-ax-insertion-check.XXXXXX)"
 xcrun --sdk macosx swiftc -sdk "$SDK" \
